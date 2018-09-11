@@ -629,26 +629,32 @@ class Transaction:
         '''Hash type in hex.'''
         return 0x01 | (cls.SIGHASH_FORKID + (cls.FORKID << 8))
 
-    def serialize_preimage(self, i):
+    def serialize_preimage(self, i,cryptocurrency="BCH"):
         nVersion = int_to_hex(self.version, 4)
         nHashType = int_to_hex(self.nHashType(), 4)
         nLocktime = int_to_hex(self.locktime, 4)
         inputs = self.inputs()
         outputs = self.outputs()
         txin = inputs[i]
+        if cryptocurrency=="BCH":
+            hashPrevouts = bh2u(Hash(bfh(''.join(self.serialize_outpoint(txin) for txin in inputs))))
+            hashSequence = bh2u(Hash(bfh(''.join(int_to_hex(txin.get('sequence', 0xffffffff - 1), 4) for txin in inputs))))
+            hashOutputs = bh2u(Hash(bfh(''.join(self.serialize_output(o) for o in outputs))))
+            outpoint = self.serialize_outpoint(txin)
+            preimage_script = self.get_preimage_script(txin)
+            scriptCode = var_int(len(preimage_script) // 2) + preimage_script
+            try:
+                amount = int_to_hex(txin['value'], 8)
+            except KeyError:
+                raise InputValueMissing
+            nSequence = int_to_hex(txin.get('sequence', 0xffffffff - 1), 4)
+            preimage = nVersion + hashPrevouts + hashSequence + outpoint + scriptCode + amount + nSequence + hashOutputs + nLocktime + nHashType
 
-        hashPrevouts = bh2u(Hash(bfh(''.join(self.serialize_outpoint(txin) for txin in inputs))))
-        hashSequence = bh2u(Hash(bfh(''.join(int_to_hex(txin.get('sequence', 0xffffffff - 1), 4) for txin in inputs))))
-        hashOutputs = bh2u(Hash(bfh(''.join(self.serialize_output(o) for o in outputs))))
-        outpoint = self.serialize_outpoint(txin)
-        preimage_script = self.get_preimage_script(txin)
-        scriptCode = var_int(len(preimage_script) // 2) + preimage_script
-        try:
-            amount = int_to_hex(txin['value'], 8)
-        except KeyError:
-            raise InputValueMissing
-        nSequence = int_to_hex(txin.get('sequence', 0xffffffff - 1), 4)
-        preimage = nVersion + hashPrevouts + hashSequence + outpoint + scriptCode + amount + nSequence + hashOutputs + nLocktime + nHashType
+        # EXPECTS NON SEGWIT
+        if cryptocurrency=="BTC":
+            txins = var_int(len(inputs)) + ''.join(self.serialize_input(txin, self.get_preimage_script(txin) if i==k else '') for k, txin in enumerate(inputs))
+            txouts = var_int(len(outputs)) + ''.join(self.serialize_output(o) for o in outputs)
+            preimage = nVersion + txins + txouts + nLocktime + nHashType
         return preimage
 
     def serialize(self, estimate_size=False):
@@ -715,7 +721,7 @@ class Transaction:
         s, r = self.signature_count()
         return r == s
 
-    def sign(self, keypairs):
+    def sign(self, keypairs,cryptocurrency="BCH"):
         for i, txin in enumerate(self.inputs()):
             num = txin['num_sig']
             pubkeys, x_pubkeys = self.get_sorted_pubkeys(txin)
@@ -729,7 +735,7 @@ class Transaction:
                     sec, compressed = keypairs.get(x_pubkey)
                     pubkey = public_key_from_private_key(sec, compressed)
                     # add signature
-                    pre_hash = Hash(bfh(self.serialize_preimage(i)))
+                    pre_hash = Hash(bfh(self.serialize_preimage(i,cryptocurrency)))
                     pkey = regenerate_key(sec)
                     secexp = pkey.secret
                     private_key = MySigningKey.from_secret_exponent(secexp, curve = SECP256k1)

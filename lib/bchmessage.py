@@ -13,10 +13,18 @@ which will allow someone to extract your private key.
 
 from . import address
 
-import ecdsa
 import hashlib
-import pyaes
+import hmac
 
+class AuthenticationError(Exception):
+    pass
+
+
+###
+# Signature/Diffie-Hellman services -- uses the incredibly slow pure python ecdsa library.
+###
+
+import ecdsa
 from ecdsa import SECP256k1
 from ecdsa.ellipticcurve import Point
 
@@ -55,15 +63,65 @@ def ser_to_point(Aser):
             y = p - y
     return Point(SECP256k1.curve, x, y, order)
 
+
+###
+# Encryption services -- uses the incredibly slow pure python pyaes library.
+###
+
+import pyaes
+import secrets
+
+def aes_encrypt(key, plaintext, iv=None):
+    """AES encrypt arbitrary length message. (uses CTR mode)
+
+    Returns iv_ciphertext which is 16 bytes longer than the input plaintext.
+
+    If iv not supplied, uses random 16 bytes from `secrets` module.
+    """
+    if iv is None:
+        iv = secrets.token_bytes(16)
+    else:
+        assert len(iv) == 16
+    counter = pyaes.Counter(int.from_bytes(iv,'big'))
+    cipher = AESModeOfOperationCTR(key, counter)
+    return iv + cipher.encrypt(plaintext)
+
+def aes_decrypt(key, iv_ciphertext):
+    """AES decrypt arbitrary length message. (uses CTR mode)
+
+    Returns plaintext, which is 16 bytes shorter than iv_ciphertext.
+
+    iv_ciphertext must be >= 16 bytes. (i.e., IV should be 16 bytes)
+    """
+    assert len(iv_ciphertext) >= 16
+    iv = iv_ciphertext[:16]
+    ciphertext = iv_ciphertext[16:]
+    counter = pyaes.Counter(int.from_bytes(iv,'big'))
+    cipher = AESModeOfOperationCTR(key, counter)
+    return cipher.decrypt(ciphertext)
+
+###
+# Transaction parsing (based on electron cash Transaction objects)
+###
+
 def parse_tx(tx):
     """
     Check a BCHMessage transaction to ensure that the first spent input
     is a P2PKH one, and it has a correct signature over the outputs.
     """
-    return pubkey, message
+    # Check inputs and outputs
+    # Check input 0 is P2PKH type.
+
+    return sourcepubkey, destinationaddr, message
 
 class Channel:
-    """Represents a public bulletin board.
+    """Represents a public bulletin board. Transactions are sent to board
+    with notification sent to an anyone-can-spend P2SH address.
+
+    Channels have a short ID number to determine address, and also an
+    encryption key. Unlike with private messages, channel messages use
+    authenticated encryption (Encrypt-then-MAC) in order to prove that
+    the sender knows the key.
 
     P2SH address: redeemscript = push['C'+chanid]
     """
@@ -72,8 +130,30 @@ class Channel:
         self.chankey = bytes(chankey)
         assert len(self.chankey) == 32
 
+    def auth_encrypt(self, message):
+        """Authenticated encrypt; adds 32 bytes (IV, MAC)."""
+        iv_ciphertext = aes_encrypt(self.chankey, message)
+        mac = hmac.new(self.chankey, iv_ciphertext, 'sha256').digest()
+        return iv_ciphertext + mac[:16]
+
+    def auth_decrypt(self, message):
+        """Authenticated decrypt; removes 32 bytes (IV, MAC).
+
+        If the MAC is not valid, this raises AuthenticationError.
+        (indicates message encrypted with another key, or, just malicious/corrupted data)
+        """
+        if len(message) < 32:
+            raise ValueError("too short")
+        iv_ciphertext = message[:-16]
+        mac1 = message[-16:]
+        mac2 = hmac.new(self.chankey, iv_ciphertext, 'sha256').digest()
+        if mac1 != mac2:
+            raise AuthenticationError
+        return aes_decrypt(self.chankey, iv_ciphertext)
+
     @classmethod
     def from_name(cls, name):
+        """Construct channel from unicode `name`."""
         name = str(name)
         h = hashlib.sha512()
         h.update(name.encode('utf8'))

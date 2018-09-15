@@ -11,17 +11,22 @@ The pure-python ecdsa module here is known to have timing attack weaknesses
 which will allow someone to extract your private key.
 """
 
-from . import address
+from .address import Address
+from . import util
+from . import bitcoin
 
 import hashlib
 import hmac
+
+class ParseError(Exception):
+    pass
 
 class AuthenticationError(Exception):
     pass
 
 
 ###
-# Signature/Diffie-Hellman services -- uses the incredibly slow pure python ecdsa library.
+# Elliptic curve signature/Diffie-Hellman services -- uses the slow pure python ecdsa library.
 ###
 
 import ecdsa
@@ -36,8 +41,13 @@ def point_to_ser(p, compressed):
         return b'\x04' + p.x().to_bytes(32, 'big') + p.y().to_bytes(32, 'big')
 
 def ser_to_point(Aser):
-    """Convert compressed or uncompressed serialized point to a Point object.
-    Does not check if it's on curve."""
+    """Convert secp256k1 serialized point (compressed or uncompressed) to a
+    Point object. This does not handle 'point at infinity'.
+
+    Does not check if point is on curve but *does* ensure points are in field.
+
+    See http://www.secg.org/sec1-v2.pdf#page=17 "Octet-String-to-Elliptic-Curve-Point Conversion"
+    """
     p     = SECP256k1.curve.p()
     order = SECP256k1.order
     assert Aser[0] in [0x02, 0x03, 0x04]
@@ -46,23 +56,53 @@ def ser_to_point(Aser):
         assert len(Aser) == 65
         x = int.from_bytes(Aser[1:33], 'big')
         y = int.from_bytes(Aser[33:], 'big')
+        assert x < p
+        assert y < p
     else:
         # compressed key
         assert len(Aser) == 33
         x = int.from_bytes(Aser[1:], 'big')
+        assert x < p
 
-        y2 = pow(x, 3, p) + 7
+        y2 = (x*x*x + 7) % p
 
-        # attempt to get quadratic residue
+        # attempt to get square root of y
         y  = pow(y2, (p+1)//4, p)
+        # for quadratic non-residue the result is nonsense, so we check:
         if pow(y, 2, p) != y2:
             raise ValueError('not a point')
 
+        # flip parity of y if it doesn't match the encoded parity
         if (Aser[0]-2) != (y&1):
-            # flip parity
             y = p - y
     return Point(SECP256k1.curve, x, y, order)
 
+def ser_to_pubkey(ASer):
+    P = ser_to_point(ASer)
+    # this is important to avoid private key leakage in ECDH
+    assert ecdsa.ecdsa.point_is_valid(SECP256k1.generator, P.x(), P.y())
+    return P
+
+def ecdh(privkey, theirpubkey):
+    """
+    Ellipic curve Diffie Hellman on secp256k1.
+
+    For a given counterparty public key (bytes; compressed/uncompressed),
+    calculate the shared secret (33 byte compressed point) and then hash
+    it using sha256.
+
+    This is equivalent to what happens in libsecp256k1's `secp256k1_ecdh`
+    function.
+
+    Returns 32 byte shared secret.
+    """
+    pk = ser_to_pubkey(theirpubkey)
+
+    ecdh_point = point_to_ser(privkey * pk, True)
+
+    h = hashlib.sha256()
+    h.update(ecdh_point)
+    return h.digest()
 
 ###
 # Encryption services -- uses the incredibly slow pure python pyaes library.
@@ -72,11 +112,12 @@ import pyaes
 import secrets
 
 def aes_encrypt(key, plaintext, iv=None):
-    """AES encrypt arbitrary length message. (uses CTR mode)
+    """AES encrypt arbitrary length message. (uses CTR mode with big-endian increment)
 
     Returns iv_ciphertext which is 16 bytes longer than the input plaintext.
 
     If iv not supplied, uses random 16 bytes from `secrets` module.
+    Generally you should not provide iv (reuse of iv on two different messages will leak plaintext!).
     """
     if iv is None:
         iv = secrets.token_bytes(16)
@@ -107,18 +148,59 @@ def aes_decrypt(key, iv_ciphertext):
 def parse_tx(tx):
     """
     Check a BCHMessage transaction to ensure that the first spent input
-    is a P2PKH one, and it has a correct signature over the outputs.
+    has P2PKH form of scriptsig, AND it has a correct signature over the
+    transaction.
+
+    Returns the source pubkey, the address of the target, and the op_return message.
     """
     # Check inputs and outputs
-    # Check input 0 is P2PKH type.
+    # Check input 0 has P2PKH type of scriptsig.
+    # Examine signature and confirm it is a valid signature on tx.
+    # Make sure the hashtype by covers the op_return output.
+
+    # we rely on the way that transaction.py parse_scriptSig() works to detect P2PKH
+    txin = tx.inputs()[0]
+    if txin['type'] != 'p2pkh':
+        raise ParseError('first input not p2pkh')
+
+    sig = bytes.fromhex(txin['signatures'][0])
+    hashbyte = sig[-1]
+    if hashbyte != (tx.nHashType() & 0xff):
+        raise ParseError('not a valid hashbyte')
+    sigder = sig[:-1]
+
+    pubkey = bytes.fromhex(txin['x_pubkeys'][0])
+    try:
+        pubkey_point = ser_to_pubkey(pubkey)
+    except:
+        raise ParseError('bad pubkey')
+
+    verkey = ecdsa.VerifyingKey.from_public_point(pubkey_point, SECP256k1)
+
+    pre_hash = bitcoin.Hash(util.bfh(tx.serialize_preimage(0)))
+
+    if not verkey.verify_digest(sigder, pre_hash, sigdecode = ecdsa.util.sigdecode_der):
+        raise ParseError('bad signature')
+
+    ## Extract message here
+    ## Extract destinationaddr here
 
     return sourcepubkey, destinationaddr, message
+
 
 class Channel:
     """Represents a public bulletin board. Transactions are sent to board
     with notification sent to an anyone-can-spend P2SH address.
 
-    Channels have a short ID number to determine address, and also an
+    Channels have a short small ID (generally 3 bytes) to determine the
+    address. This makes 16 million notification addresses, which can be
+    simply enumerated by anyone who wants to collect the notification dust.
+    (dust collection is profitable: with only 47 bytes per input
+
+    Collisions
+    between channels are not a problem, because each channel also has
+    a 256-bit encryption key that both encrypts channel messages and
+
     encryption key. Unlike with private messages, channel messages use
     authenticated encryption (Encrypt-then-MAC) in order to prove that
     the sender knows the key.
@@ -126,9 +208,13 @@ class Channel:
     P2SH address: redeemscript = push['C'+chanid]
     """
     def __init__(self, chanid, chankey):
-        self.chanid = bytes(chanid)
+        self.chanid = bytes(chanid)   # generally 3 bytes but not always.
+        assert len(self.chanid) < 75  # simplify redeem script + scriptsig
         self.chankey = bytes(chankey)
         assert len(self.chankey) == 32
+
+        self.redeemscript = bytes((len(self.chanid)+1, 0x43)) + self.chanid
+        self.address = Address.from_multisig_script(self.redeemscript)
 
     def auth_encrypt(self, message):
         """Authenticated encrypt; adds 32 bytes (IV, MAC)."""
@@ -158,15 +244,16 @@ class Channel:
         h = hashlib.sha512()
         h.update(name.encode('utf8'))
         digest = h.digest()
-        chanid = digest[:16]
+        chanid = digest[:4]
         chankey = digest[32:]
         self = cls.__init__(chanid, chankey)
         self.name = name
         return self
 
+
 class MessagingKey:
-    """Holder for single unlocked private key, used to encrypt/decrypt messages,
-    and more."""
+    """Holder for single unlocked private key, used to create and read private
+    messages."""
     ecdh_hasher = hashlib.sha256
 
     def __init__(self, pubkey, privkey):
@@ -179,26 +266,6 @@ class MessagingKey:
     @classmethod
     def from_wallet(cls, wallet, address, password):
         raise NotImplementedError
-
-    def ecdh(self, theirpubkey):
-        """
-        Ellipic curve Diffie Hellman on secp256k1.
-
-        For a given counterparty public key (bytes; compressed/uncompressed),
-        calculate the shared secret (33 byte compressed point) and then hash
-        it using the hashlib factory found in self.ecdh_hasher (sha256).
-
-        Returns 32 byte shared secret.
-        """
-        pk = ser_to_point(theirpubkey)
-        if not ecdsa.ecdsa.point_is_valid(SECP256k1.generator, pk.x(), pk.y()):
-            raise Exception('invalid pubkey')
-
-        ecdh_point = point_to_ser(self.privkey * pk, True)
-
-        h = self.ecdh_hasher()
-        h.update(ecdh_point)
-        return h.digest()
 
     def create_private_message(self, wallet, dest_pubkey, message, config, fee=None):
         """

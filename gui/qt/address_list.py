@@ -74,7 +74,7 @@ class AddressList(MyTreeWidget):
                 seq_item.setExpanded(True)
             used_item_name = used_item.text(0) if not used_item.parent() else used_item.parent().text(0) + "/" + used_item.text(0)
             if not used_item.isExpanded() and used_item_name in expanded_item_names:
-                used_item.setExpanded(True)       
+                used_item.setExpanded(True)
         self.wallet = self.parent.wallet
         had_item_count = self.topLevelItemCount()
         item = self.currentItem()
@@ -175,6 +175,7 @@ class AddressList(MyTreeWidget):
             if self.wallet.can_export():
                 menu.addAction(_("Private key"), lambda: self.parent.show_private_key(addr))
             if not is_multisig and not self.wallet.is_watching_only():
+                menu.addAction(_("Open in BCHmessage"), lambda: self.parent.open_bchmessage(addr))
                 menu.addAction(_("Sign/verify message"), lambda: self.parent.sign_verify_message(addr))
                 menu.addAction(_("Encrypt/decrypt message"), lambda: self.parent.encrypt_message(addr))
             if can_delete:

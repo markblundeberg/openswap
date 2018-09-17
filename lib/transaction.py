@@ -629,13 +629,14 @@ class Transaction:
         '''Hash type in hex.'''
         return 0x01 | (cls.SIGHASH_FORKID + (cls.FORKID << 8))
 
-    def serialize_preimage(self, i,cryptocurrency="BCH"):
+    def serialize_preimage(self, i,):
         nVersion = int_to_hex(self.version, 4)
         nHashType = int_to_hex(self.nHashType(), 4)
         nLocktime = int_to_hex(self.locktime, 4)
         inputs = self.inputs()
         outputs = self.outputs()
         txin = inputs[i]
+        cryptocurrency=getattr(self, 'cryptocurrency', 'BCH')
         if cryptocurrency=="BCH":
             hashPrevouts = bh2u(Hash(bfh(''.join(self.serialize_outpoint(txin) for txin in inputs))))
             hashSequence = bh2u(Hash(bfh(''.join(int_to_hex(txin.get('sequence', 0xffffffff - 1), 4) for txin in inputs))))
@@ -721,7 +722,7 @@ class Transaction:
         s, r = self.signature_count()
         return r == s
 
-    def sign(self, keypairs,cryptocurrency="BCH"):
+    def sign(self, keypairs):
         for i, txin in enumerate(self.inputs()):
             num = txin['num_sig']
             pubkeys, x_pubkeys = self.get_sorted_pubkeys(txin)
@@ -735,7 +736,7 @@ class Transaction:
                     sec, compressed = keypairs.get(x_pubkey)
                     pubkey = public_key_from_private_key(sec, compressed)
                     # add signature
-                    pre_hash = Hash(bfh(self.serialize_preimage(i,cryptocurrency)))
+                    pre_hash = Hash(bfh(self.serialize_preimage(i)))
                     pkey = regenerate_key(sec)
                     secexp = pkey.secret
                     private_key = MySigningKey.from_secret_exponent(secexp, curve = SECP256k1)

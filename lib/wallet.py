@@ -167,6 +167,8 @@ class Abstract_Wallet(PrintError):
         self.synchronizer = None
         self.verifier = None
 
+        self.cryptocurrency        = self.storage.get('cryptocurrency', 'BCH')
+
         self.gap_limit_for_change = 6 # constant
         # saved fields
         self.use_change            = storage.get('use_change', True)
@@ -281,7 +283,7 @@ class Abstract_Wallet(PrintError):
             self.storage.put('verified_tx3', self.verified_tx)
             if write:
                 self.storage.write()
-                
+
     def clear_history(self):
         with self.transaction_lock:
             self.txi = {}
@@ -802,7 +804,7 @@ class Abstract_Wallet(PrintError):
 
         # Store fees
         self.tx_fees.update(tx_fees)
-        
+
         if self.network:
             self.network.trigger_callback('on_history')
 
@@ -1214,10 +1216,13 @@ class Abstract_Wallet(PrintError):
         tx.output_info = info
 
     def sign_transaction(self, tx, password):
-        cryptocurrency=self.storage.get('cryptocurrency', False)  
         if self.is_watching_only():
             return
         # add input values for signing
+        try:
+            assert tx.cryptocurrency == self.cryptocurrency
+        except AttributeError:
+            tx.cryptocurrency = self.cryptocurrency
         self.add_input_values_to_tx(tx)
         # hardware wallets require extra info
         if any([(isinstance(k, Hardware_KeyStore) and k.can_sign(tx)) for k in self.get_keystores()]):
@@ -1226,7 +1231,7 @@ class Abstract_Wallet(PrintError):
         for k in self.get_keystores():
             try:
                 if k.can_sign(tx):
-                    k.sign_transaction(tx, password,cryptocurrency)
+                    k.sign_transaction(tx, password)
             except UserCancelled:
                 continue
 
@@ -1546,7 +1551,7 @@ class ImportedWalletBase(Simple_Wallet):
                 # FIXME: what about pruned_txo?
 
             self.storage.put('verified_tx3', self.verified_tx)
-            
+
         self.save_transactions()
 
         self.set_label(address.to_storage_string(), None)

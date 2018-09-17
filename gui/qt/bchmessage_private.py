@@ -35,6 +35,7 @@ class BCHMessageDialog(QDialog):
         self.parent = parent
         self.config = parent.config
         self.wallet = parent.wallet
+        self.network = parent.network
         self.app = parent.app
         self.saved = True
 
@@ -166,15 +167,24 @@ class BMHistoryList(MyTreeWidget):
                 s,d,m = self.cache_parsed[tx_hash]
             except KeyError:
                 tx = self.wallet.transactions[tx_hash]
-                for item in tx.inputs():
-                    self.wallet.add_input_info(item)
+                in0 = tx.inputs()[0]
+                self.wallet.add_input_info(in0)
+                if not in0.get('value', None):
+                    # missing prevtx's value... need to get!
+                    raw = self.parent.network.synchronous_get(('blockchain.transaction.get', [in0['prevout_hash']]))
+                    if raw:
+                        from electroncash.transaction import Transaction
+                        prevtx = Transaction(raw)
+                        in0['value'] = prevtx.outputs()[in0['prevout_n']][2]
+                    else:
+                        continue # couldn't get parent transaction
                 try:
                     s,d,m = bchmessage.parse_tx(tx)
+                    self.known_pubkeys[Address.from_pubkey(s)] = s
                 except bchmessage.ParseError as e:
                     # uncomment the following to debug why transactions are not appearing
                     #self.insertTopLevelItem(0, SortableTreeWidgetItem(['ERR','',str(e)]))
-                    continue
-                self.known_pubkeys[Address.from_pubkey(s)] = s
+                    s,d,m = None, None, None
                 self.cache_parsed[tx_hash] = (s,d,m)
             messages.append((height,tx_hash,s,d,m))
 
@@ -198,6 +208,7 @@ class BMHistoryList(MyTreeWidget):
                 otherpubkey = s
             else:
                 # this can happen for example if we are output=2
+#                otherpubkey = None
                 continue
 
             if otherpubkey:

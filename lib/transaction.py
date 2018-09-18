@@ -273,7 +273,7 @@ def parse_scriptSig(d, _bytes):
     x_sig = [bh2u(x[1]) for x in decoded[1:-1]]
     m, n, x_pubkeys, pubkeys, redeemScript = parse_redeemScript(decoded[-1][1])
     # write result in d
-    d['type'] = 'p2sh'
+    d['type'] = 'p2sh-multisig'
     d['num_sig'] = m
     d['signatures'] = parse_sig(x_sig)
     d['x_pubkeys'] = x_pubkeys
@@ -397,7 +397,7 @@ class Transaction:
 
     def __str__(self):
         if self.raw is None:
-            self.raw = self.serialize()
+            self.serialize()
         return self.raw
 
     def __init__(self, raw):
@@ -474,7 +474,7 @@ class Transaction:
                         #self._inputs[i]['x_pubkeys'][j] = pubkey
                         break
         # redo raw
-        self.raw = self.serialize()
+        self.serialize()
 
     def deserialize(self):
         if self.raw is None:
@@ -556,21 +556,21 @@ class Transaction:
     @classmethod
     def input_script(self, txin, estimate_size=False):
         _type = txin['type']
-        if _type == 'coinbase':
+        if _type in ['coinbase', 'unknown']:
             return txin['scriptSig']
         pubkeys, sig_list = self.get_siglist(txin, estimate_size)
         script = ''.join(push_script(x) for x in sig_list)
         if _type == 'p2pk':
             pass
-        elif _type == 'p2sh':
+        elif _type == 'p2sh-multisig':
             # put op_0 before script
             script = '00' + script
             redeem_script = multisig_script(pubkeys, txin['num_sig'])
             script += push_script(redeem_script)
         elif _type == 'p2pkh':
             script += push_script(pubkeys[0])
-        elif _type == 'unknown':
-            return txin['scriptSig']
+        else:
+            raise RuntimeError('Unknown txin type', _type)
         return script
 
     @classmethod
@@ -582,16 +582,20 @@ class Transaction:
 
     @classmethod
     def get_preimage_script(self, txin):
-        if txin['type'] == 'p2pkh':
+        _type = txin['type']
+        if _type == 'p2pkh':
             return txin['address'].to_script().hex()
-        elif txin['type'] in ['p2sh']:
+        elif _type == 'p2sh-multisig':
             pubkeys, x_pubkeys = self.get_sorted_pubkeys(txin)
             return multisig_script(pubkeys, txin['num_sig'])
-        elif txin['type'] == 'p2pk':
+        elif _type == 'p2pk':
             pubkey = txin['pubkeys'][0]
             return public_key_to_p2pk_script(pubkey)
+        elif _type == 'unknown':
+            # this approach enables most P2SH smart contracts (but take care if using OP_CODESEPARATOR)
+            return txin['scriptCode']
         else:
-            raise TypeError('Unknown txin type', txin['type'])
+            raise RuntimeError('Unknown txin type', _type)
 
     @classmethod
     def serialize_outpoint(self, txin):
@@ -650,12 +654,13 @@ class Transaction:
                 raise InputValueMissing
             nSequence = int_to_hex(txin.get('sequence', 0xffffffff - 1), 4)
             preimage = nVersion + hashPrevouts + hashSequence + outpoint + scriptCode + amount + nSequence + hashOutputs + nLocktime + nHashType
-
-        # EXPECTS NON SEGWIT
-        if cryptocurrency=="BTC":
+        elif cryptocurrency=="BTC":
+            # EXPECTS NON SEGWIT
             txins = var_int(len(inputs)) + ''.join(self.serialize_input(txin, self.get_preimage_script(txin) if i==k else '') for k, txin in enumerate(inputs))
             txouts = var_int(len(outputs)) + ''.join(self.serialize_output(o) for o in outputs)
             preimage = nVersion + txins + txouts + nLocktime + nHashType
+        else:
+            raise RuntimeError('unknown cryptocurrency', cryptocurrency)
         return preimage
 
     def serialize(self, estimate_size=False):
@@ -665,7 +670,8 @@ class Transaction:
         outputs = self.outputs()
         txins = var_int(len(inputs)) + ''.join(self.serialize_input(txin, self.input_script(txin, estimate_size), estimate_size) for txin in inputs)
         txouts = var_int(len(outputs)) + ''.join(self.serialize_output(o) for o in outputs)
-        return nVersion + txins + txouts + nLocktime
+        self.raw = nVersion + txins + txouts + nLocktime
+        return self.raw
 
     def hash(self):
         print("warning: deprecated tx.hash()")
@@ -748,7 +754,7 @@ class Transaction:
                     txin['pubkeys'][j] = pubkey # needed for fd keys
                     self._inputs[i] = txin
         print_error("is_complete", self.is_complete())
-        self.raw = self.serialize()
+        self.serialize()
 
     def get_outputs(self):
         """convert pubkeys to addresses"""
@@ -771,7 +777,7 @@ class Transaction:
 
     def as_dict(self):
         if self.raw is None:
-            self.raw = self.serialize()
+            self.serialize()
         self.deserialize()
         out = {
             'hex': self.raw,

@@ -16,6 +16,41 @@ addresses other than multisig ones.
     - 'num_sig': set to the right number.
     - provide 'x_pubkeys' which matches the `keypairs` dict keys.
 - After calling .sign(), reconstitute the correct scriptSig and then call .serialize() again.
+
+
+Protocol for basic swap:
+
+- Alice posts advertisement including:
+    - [header byte: offer v0]
+    - wanted amount, ticker1
+    - offered amount, ticker2
+    - expiry time
+- Bob replies with counteroffer:
+    - [header byte: trade v0]
+    - Alice offer ID
+    - subID [~ 2 byte]
+    - wanted amount, ticker1
+    - offered amount, ticker2
+    - expiry time
+    - swapcontract info:
+        - Acceptable smartcontract types
+        - Bob pubkey for ticker1
+        - (Bob pubkey for ticker2 - not needed if both use secp256k1)
+- Alice replies:
+    - [header byte: accept v0]
+    - Alice offer ID
+    - subID [~ 2 byte]
+    - swapcontract info:
+        - Smartcontract type
+        - Alice refund time
+        - Secret hash
+        - Secret size
+        - Alice pubkey for ticker1
+        - (Alice pubkey for ticker2 - not needed if both use secp256k1)
+
+Questions:
+- Who goes first?
+- Use padding?
 """
 
 from . import bitcoin
@@ -51,8 +86,8 @@ class SwapContract:
         assert self.refund_time >= LOCKTIME_THRESHOLD  # don't allow blocktime-based times.
         assert self.refund_time < 2**32  # keep it within 4 bytes for now.
 
-        if self.secret_size <= 16:
-            sspush = self.secret_size
+        if 1 <= self.secret_size <= 16:
+            sspush = 0x50 + self.secret_size  # put as OP_N
         else:
             sspush = bytes((1, self.secret_size))
 

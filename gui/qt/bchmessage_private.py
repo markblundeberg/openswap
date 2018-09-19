@@ -150,6 +150,38 @@ class BMHistoryList(MyTreeWidget):
         headers = [_('Height'), _('Who'), _('Message') ]
         self.update_headers(headers)
 
+    def get_mesg(self, tx_hash):
+        try:
+            return self.cache_parsed[tx_hash]
+        except KeyError:
+            pass
+        tx = self.wallet.transactions[tx_hash]
+        try:
+            source,dest,callback = bchmessage.parse_tx(tx)
+            self.known_pubkeys[Address.from_pubkey(source)] = source
+        except bchmessage.ParseError as e:
+            # uncomment the following to debug why transactions are not appearing
+            #self.insertTopLevelItem(0, SortableTreeWidgetItem(['ERR','',str(e)]))
+            self.cache_parsed[tx_hash] = (None, None, None)
+            return None, None, None
+
+        # we have a candidate tx to read, so we need to get its parent in order
+        # to check the signature
+        in0 = tx.inputs()[0]
+        self.wallet.add_input_info(in0)
+        if not in0.get('value', None):
+            # missing prevtx's value... need to get!
+            raw = self.parent.network.synchronous_get(('blockchain.transaction.get', [in0['prevout_hash']]))
+            if raw:
+                from electroncash.transaction import Transaction
+                prevtx = Transaction(raw)
+                in0['value'] = prevtx.outputs()[in0['prevout_n']][2]
+            else:
+                return None, None, None # couldn't get parent transaction
+        m = callback()
+        self.cache_parsed[tx_hash] = (source,dest,m)
+        return (source, dest, m)
+
     def on_update(self):
         item = self.currentItem()
         current_tx = item.data(0, Qt.UserRole) if item else None
@@ -163,29 +195,7 @@ class BMHistoryList(MyTreeWidget):
         # first iteration - parse txes and gather pubkeys
         messages = []
         for tx_hash, height in self.wallet.get_address_history(myaddress):
-            try:
-                s,d,m = self.cache_parsed[tx_hash]
-            except KeyError:
-                tx = self.wallet.transactions[tx_hash]
-                in0 = tx.inputs()[0]
-                self.wallet.add_input_info(in0)
-                if not in0.get('value', None):
-                    # missing prevtx's value... need to get!
-                    raw = self.parent.network.synchronous_get(('blockchain.transaction.get', [in0['prevout_hash']]))
-                    if raw:
-                        from electroncash.transaction import Transaction
-                        prevtx = Transaction(raw)
-                        in0['value'] = prevtx.outputs()[in0['prevout_n']][2]
-                    else:
-                        continue # couldn't get parent transaction
-                try:
-                    s,d,m = bchmessage.parse_tx(tx)
-                    self.known_pubkeys[Address.from_pubkey(s)] = s
-                except bchmessage.ParseError as e:
-                    # uncomment the following to debug why transactions are not appearing
-                    #self.insertTopLevelItem(0, SortableTreeWidgetItem(['ERR','',str(e)]))
-                    s,d,m = None, None, None
-                self.cache_parsed[tx_hash] = (s,d,m)
+            s,d,m = self.get_mesg(tx_hash)
             messages.append((height,tx_hash,s,d,m))
 
         # second iteration -- decode and display

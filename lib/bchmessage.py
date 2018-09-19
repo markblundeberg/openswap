@@ -185,13 +185,16 @@ def parse_tx(tx):
     has P2PKH form of scriptsig, AND it has a correct signature over the
     transaction.
 
-    Important: you need to call wallet.add_input_info() on each of the
-    inputs before running this. Otherwise the signature checking will
-    fail.
+    Returns 3-tuple:
+    - the source pubkey (input 0),
+    - the address of the intended recipient (output 1),
+    - a callback to check signature and get the message (output 0 op_return).
 
-    Returns the source pubkey (input 0), the message (output 0 op_return),
-    and the address of the intended recipient (output 1). Other inputs
-    and outputs are ignored.
+    Other inputs and outputs are ignored.
+
+    Important: before you call the callback, you need to make sure the
+    inputs have correct info on them (use wallet.add_input_info()) otherwise
+    the signature checking will fail.
     """
     if len(tx.outputs()) < 2 or len(tx.inputs()) < 1:
         raise ParseError('too few inputs/outputs')
@@ -233,16 +236,19 @@ def parse_tx(tx):
     except:
         raise ParseError('bad pubkey')
 
-    pre_hash = bitcoin.Hash(util.bfh(tx.serialize_preimage(0)))
+    def callback():
+        pre_hash = bitcoin.Hash(util.bfh(tx.serialize_preimage(0)))
 
-    verkey = ecdsa.VerifyingKey.from_public_point(pubkey_point, SECP256k1)
+        verkey = ecdsa.VerifyingKey.from_public_point(pubkey_point, SECP256k1)
 
-    try:
-        if not verkey.verify_digest(sigder, pre_hash, sigdecode = ecdsa.util.sigdecode_der):
-            raise ParseError('bad signature')
-    except:
-        raise ParseError('signature verification failure')
-    return pubkey, destinationaddr, message
+        try:
+            if not verkey.verify_digest(sigder, pre_hash, sigdecode = ecdsa.util.sigdecode_der):
+                raise ParseError('bad signature')
+        except:
+            raise ParseError('signature verification failure')
+        return message
+
+    return pubkey, destinationaddr, callback
 
 def make_opreturn(data):
     """Turn data bytes into a single-push opreturn script"""

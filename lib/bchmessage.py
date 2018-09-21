@@ -408,7 +408,7 @@ class MessagingKey:
         outputs = tx.outputs()
         outputs = askedoutputs + [o for o in outputs if o not in askedoutputs]
         tx = transaction.Transaction.from_io(tx.inputs(), outputs, tx.locktime)
-        tx.cryptocurrency='BCH'
+        tx.cryptocurrency = wallet.cryptocurrency
 
         # get the 'x_pubkey' which for HD wallets is not the same as pubkey.
         in0 = tx.inputs()[0]

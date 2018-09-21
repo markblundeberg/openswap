@@ -1,6 +1,7 @@
 
 from electroncash.i18n import _
 from electroncash.address import Address, ScriptOutput
+from electroncash.transaction import Transaction,TYPE_ADDRESS
 import electroncash.web as web
 
 from PyQt5.QtCore import *
@@ -34,15 +35,15 @@ class SwapDialog(QDialog):
         self.key = key
         self.address = key.address
         pubkey = key.pubkey.hex()
+        self.contract = None
 
         self.parent = parent
         self.config = parent.config
         self.wallet = parent.wallet
         self.network = parent.network
         self.app = parent.app
-        self.saved = True
 
-        self.setWindowTitle(_("OpenSwap playing"))
+        self.setWindowTitle(_("OpenSwap testing"))
 
         self.setMinimumWidth(700)
         vbox = QVBoxLayout()
@@ -55,22 +56,22 @@ class SwapDialog(QDialog):
         vbox.addWidget(self.mypubkey_e)
 
         vbox.addWidget(QLabel(_("Alice pubkey") + ':'))
-        self.apubkey_e = ButtonsLineEdit()
+        self.apubkey_e = ButtonsLineEdit('0393cf5fe816e17df367be43d4f079e4f6480848982e0175818f8a4bc76944d23b')
         #self.apubkey_e.addCopyButton(self.app)
         vbox.addWidget(self.apubkey_e)
 
         vbox.addWidget(QLabel(_("Bob pubkey") + ':'))
-        self.bpubkey_e = ButtonsLineEdit()
+        self.bpubkey_e = ButtonsLineEdit('02c3f2feffb3cb7f218a38c004002d22680bcd5d2b29952b9d4e69b6956b288a6e')
         #self.bpubkey_e.addCopyButton(self.app)
         vbox.addWidget(self.bpubkey_e)
 
         vbox.addWidget(QLabel(_("Alice refund time") + ':'))
         self.rtime_e = QLineEdit()
         vbox.addWidget(self.rtime_e)
-        self.rtime_e.setText(str(int(time.time())))
+        self.rtime_e.setText('1537491000') #str(int(time.time())))
 
         vbox.addWidget(QLabel(_("Alice's secret") + ':'))
-        self.secret_e = QLineEdit()
+        self.secret_e = QLineEdit('openswap')
         vbox.addWidget(self.secret_e)
 
         vbox.addWidget(QLabel(_("Secret size, secret hash") + ':'))
@@ -112,23 +113,33 @@ class SwapDialog(QDialog):
         self.bpubkey_e.textChanged.connect(upd_contract)
         self.rtime_e.textChanged.connect(upd_contract)
 
+        upd_secret()
+
         b = QPushButton(_("Show RedeemScript"))
         b.clicked.connect(self.showscript)
         vbox.addWidget(b)
 
         vbox.addWidget(QLabel(_("UTXO hash") + ':'))
-        utxo_hash_e = QLineEdit()
-        vbox.addWidget(utxo_hash_e)
+        self.utxo_hash_e = QLineEdit('e1606d3f9d2ca728f5a32671968f167e76ed49f79618b607caec1fa355e629b4')
+        vbox.addWidget(self.utxo_hash_e)
 
         vbox.addWidget(QLabel(_("UTXO out") + ':'))
-        utxo_out_e = QLineEdit()
-        vbox.addWidget(utxo_out_e)
+        self.utxo_out_e = QLineEdit('0')
+        vbox.addWidget(self.utxo_out_e)
 
         vbox.addWidget(QLabel(_("UTXO value") + ':'))
-        utxo_val_e = QLineEdit()
-        vbox.addWidget(utxo_val_e)
+        self.utxo_val_e = QLineEdit('10000000')
+        vbox.addWidget(self.utxo_val_e)
 
         hbox = QHBoxLayout()
+
+        b = QPushButton(_("Redeem"))
+        b.clicked.connect(self.redeem)
+        hbox.addWidget(b)
+
+        b = QPushButton(_("Refund"))
+        b.clicked.connect(self.refund)
+        hbox.addWidget(b)
 
         hbox.addStretch(1)
 
@@ -179,3 +190,32 @@ class SwapDialog(QDialog):
         d.exec_()
             #self.app.clipboard().setText(scr)
             #QToolTip.showText(QCursor.pos(), _("Text copied to clipboard"), self)
+
+    def redeem(self,):
+        assert self.key.pubkey == self.contract.redeem_pubkey
+        tx = self.mktx('redeem')
+        self.contract.signtx(tx, self.key.privkey)
+        self.contract.completetx(tx, self.secret_bytes)
+        show_transaction(tx, self.parent)
+
+    def refund(self,):
+        assert self.key.pubkey == self.contract.refund_pubkey
+        tx = self.mktx('refund')
+        self.contract.signtx(tx, self.key.privkey)
+        self.contract.completetx(tx, None)
+        show_transaction(tx, self.parent)
+
+    def mktx(self,mode):
+        val = int(self.utxo_val_e.text())
+        inps = [self.contract.makeinput(self.utxo_hash_e.text(),
+                                        int(self.utxo_out_e.text()),
+                                        val,
+                                        mode)
+                ]
+        outs = [(TYPE_ADDRESS,
+                 Address.from_cashaddr_string('bchtest:qrzeh82j6gv4se3ska395j0gnghpc00ltv9cp7llcn'),
+                 val-300)]
+        tx = Transaction.from_io(inps, outs)
+        if mode == 'refund':
+            tx.locktime = self.contract.refund_time
+        return tx

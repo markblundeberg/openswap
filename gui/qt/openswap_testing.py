@@ -120,7 +120,7 @@ class SwapDialog(QDialog):
         vbox.addWidget(b)
 
         vbox.addWidget(QLabel(_("UTXO hash") + ':'))
-        self.utxo_hash_e = QLineEdit('e1606d3f9d2ca728f5a32671968f167e76ed49f79618b607caec1fa355e629b4')
+        self.utxo_hash_e = QLineEdit('')
         vbox.addWidget(self.utxo_hash_e)
 
         vbox.addWidget(QLabel(_("UTXO out") + ':'))
@@ -139,6 +139,10 @@ class SwapDialog(QDialog):
 
         b = QPushButton(_("Refund"))
         b.clicked.connect(self.refund)
+        hbox.addWidget(b)
+
+        b = QPushButton(_("Spy secret"))
+        b.clicked.connect(self.spy)
         hbox.addWidget(b)
 
         hbox.addStretch(1)
@@ -219,3 +223,20 @@ class SwapDialog(QDialog):
         if mode == 'refund':
             tx.locktime = self.contract.refund_time
         return tx
+
+    def spy(self,):
+        d = QInputDialog(self)
+        d.setLabelText("TXID of spend")
+        d.setTextValue('1a32969e2c2928cb1f337f67d06eae47ba046e48cce27190dca40027fa2858e0')
+        d.exec_()
+        txid = d.textValue()
+
+        raw = self.network.synchronous_get(('blockchain.transaction.get', [txid]), timeout=3)
+        if raw:
+            tx = Transaction(raw)
+            secret = self.contract.extract(tx)
+            if secret:
+                print("GOT", secret)
+                self.secret_e.setText(secret.decode('utf8'))
+
+

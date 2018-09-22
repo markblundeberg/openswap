@@ -55,7 +55,7 @@ Questions:
 
 from . import bitcoin
 from . import bchmessage
-from .address import OpCodes, Address, hash160
+from .address import OpCodes, Address, Script, hash160
 from .transaction import Transaction
 
 from ecdsa.ecdsa import generator_secp256k1
@@ -125,12 +125,15 @@ class SwapContract:
 
         self.address = Address.from_multisig_script(self.redeemscript)
 
+        # must be equal for two smart contracts to be compatible.
+        self.secret_form = ('HASH160', self.secret_size, self.secret_hash)
+
         self.dummy_scriptsig_redeem = '01'*(5 + self.secret_size + 71 + len(self.redeemscript))
         self.dummy_scriptsig_refund = '00'*(4 + 71 + len(self.redeemscript))
 
-    def extract(self, tx, index):
+    def extract(self, tx):
         """
-        Extract the secret from a spent SwapContract's scriptSig.
+        Try to extract the secret from a spent SwapContract's scriptSig.
 
         Trickiness: scriptSig is allowed to have many different opcodes,
         which may be used to confuse the detection algorithm.
@@ -140,34 +143,36 @@ class SwapContract:
         OP_CAT and OP_SPLIT. Starting from November, the scriptSig push-only
         rule will prevent such obfuscations.
 
+        In non-BCH also some obfuscation is possible using hash functions.
+
         The solution here iterates over all pushes in the script, seeing if
         any of them hash to produce the right value. This handles all the other
         kinds of obfuscation (not involving CAT/SPLIT).
 
         If no matching secret found, this returns None.
         """
-        txin = tx.inputs()[index]
-
-        if txin['address'] != self.address:
-            raise RuntimeError('address mismatch')
-
-        ops = Script.get_ops(txin['scriptSig'])
-
-        for o in ops:
-            if not isinstance(o,tuple):
-                continue  # skip non-push
-            op, data = o
-            if not data or len(data) != self.secret_size:
-                continue  # skip wrong length
-            if hash160(data) == self.secret_hash:
-                return data
+        for txin in tx.inputs():
+            ops = Script.get_ops(bytes.fromhex(txin['scriptSig']))
+            # first check if the last push is the redeemscript for this contract
+            if not isinstance(ops[-1], tuple) or ops[-1][1] != self.redeemscript:
+                continue
+            # found match -- iterate over all pushes to see if we get a match
+            for o in ops:
+                if not isinstance(o,tuple):
+                    continue  # skip non-push
+                op, data = o
+                if not data or len(data) != self.secret_size:
+                    continue  # skip wrong length
+                if hash160(data) == self.secret_hash:
+                    return data
 
     def makeinput(self, prevout_hash, prevout_n, value, mode):
         """
         Construct an unsigned input for adding to a transaction. scriptSig is
-        set to all zeros, for size estimation.
+        set to a dummy value, for size estimation.
 
-        (note: Transaction object will think it is complete)
+        (note: Transaction object will may it is complete, but it will
+        fail to broadcast until you sign and run `completetx`)
         """
         if mode == 'redeem':
             scriptSig = self.dummy_scriptsig_redeem
@@ -243,3 +248,40 @@ class SwapContract:
                     ]
                 print(script)
             txin['scriptSig'] = mkscript(script).hex()
+
+
+from .wallet import ImportedAddressWallet
+from .storage import WalletStorage
+
+def HalfSwapController:
+    """
+    Associated with a half-swap (one of two smart contracts in an atomic swap)
+
+    This creates an in-memory wallet object to watch the relevant address, and
+    attaches it to the provided network object. Make sure to call .shutdown()
+    when you're done with me.
+    """
+    def __init__(self, contract, network, config):
+        self.contract = contract
+        self.network = network
+
+        # create an in-memory storage that is never saved anywhere
+        wstorage = WalletStorage(None)  # path = None
+
+        wallet = ImportedAddressWallet(wstorage)
+        wallet.import_address(self.contract.address)
+        self.wallet = wallet
+
+        self.wallet.start_threads(network)
+
+        interests = ['updated', 'new_transaction', 'status',
+                         'banner', 'verified', 'fee']
+
+        self.network.register_callback(self.on_network, interests)
+
+    def on_network(self, event, *args):
+        print('on_network', event, args)
+
+    def shutdown(self):
+        self.wallet.stop_threads()
+        self.network.unregister_callback(self.on_network)

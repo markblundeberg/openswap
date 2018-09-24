@@ -2273,6 +2273,14 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         d = show_dialog(self, key)
 
     @protected
+    def open_openswaptest2(self, address, password):
+        from .openswap_testing2 import show_dialog
+        from electroncash import bchmessage
+
+        key = bchmessage.MessagingKey.from_wallet(self.wallet, address, password)
+        d = show_dialog(self, key)
+
+    @protected
     def do_decrypt(self, message_e, pubkey_e, encrypted_e, password):
         if self.wallet.is_watching_only():
             self.show_message(_('This is a watching-only wallet.'))

@@ -57,8 +57,10 @@ from . import bitcoin
 from . import bchmessage
 from .address import OpCodes, Address, Script, hash160
 from .transaction import Transaction
+from time import time
 
 from ecdsa.ecdsa import generator_secp256k1
+from .bchmessage import point_to_ser
 
 # Below this number, nLockTime and OP_CHECKLOCKTIMEVERIFY input are defined
 # using the block number. Othewise using epoch timestamp.
@@ -128,8 +130,9 @@ class SwapContract:
         # must be equal for two smart contracts to be compatible.
         self.secret_form = ('HASH160', self.secret_size, self.secret_hash)
 
-        self.dummy_scriptsig_redeem = '01'*(5 + self.secret_size + 71 + len(self.redeemscript))
-        self.dummy_scriptsig_refund = '00'*(4 + 71 + len(self.redeemscript))
+        # make dummy scripts of correct size
+        self.dummy_scriptsig_redeem = '01'*(5 + self.secret_size + 72 + len(self.redeemscript))
+        self.dummy_scriptsig_refund = '00'*(4 + 72 + len(self.redeemscript))
 
     def extract(self, tx):
         """
@@ -201,7 +204,7 @@ class SwapContract:
 
     def signtx(self, tx, privatekey):
         """generic tx signer for compressed pubkey"""
-        pubkey = bchmessage.point_to_ser(privatekey * generator_secp256k1, True)
+        pubkey = point_to_ser(privatekey * generator_secp256k1, True)
         keypairs = {pubkey.hex() : (privatekey.to_bytes(32, 'big'), True)}
         tx.sign(keypairs)
 
@@ -253,15 +256,20 @@ class SwapContract:
 from .wallet import ImportedAddressWallet
 from .storage import WalletStorage
 
-def HalfSwapController:
+class HalfSwapController:
     """
     Associated with a half-swap (one of two smart contracts in an atomic swap)
 
     This creates an in-memory wallet object to watch the relevant address, and
     attaches it to the provided network object. Make sure to call .shutdown()
     when you're done with me.
+
+
     """
-    def __init__(self, contract, network, config):
+    secret = None
+    privkey = None
+    pubkey = None
+    def __init__(self, contract, network):
         self.contract = contract
         self.network = network
 
@@ -274,14 +282,82 @@ def HalfSwapController:
 
         self.wallet.start_threads(network)
 
-        interests = ['updated', 'new_transaction', 'status',
-                         'banner', 'verified', 'fee']
+        # get some debug info printed to console
+        interests = ['updated', 'new_transaction']
 
         self.network.register_callback(self.on_network, interests)
 
     def on_network(self, event, *args):
-        print('on_network', event, args)
+        pass
+        #print('on_network', event, args)
 
     def shutdown(self):
         self.wallet.stop_threads()
         self.network.unregister_callback(self.on_network)
+
+    def set_privkey(self, privkey):
+        self.privkey = privkey
+        self.pubkey = point_to_ser(privkey * generator_secp256k1, True)
+
+    def set_secret(self, secret):
+        secret = bytes(secret)
+        assert len(secret) == self.contract.secret_size
+        assert hash160(secret) == self.contract.secret_hash
+        self.secret = secret
+
+    def can_redeem(self, ):
+        """Returns boolean whether given private key and secret can redeem."""
+        return (bool(self.secret) and self.pubkey == self.contract.redeem_pubkey)
+
+    def can_refund(self, ):
+        """Returns boolean whether given private key can refund. See also
+        refund_time_remaining."""
+        return (self.pubkey == self.contract.refund_pubkey)
+
+    def estimate_time_remaining(self, ):
+        """Returns estimate of remaining time until refund can be broadcast.
+        (assumes BIP113 mechanics for nLockTime)
+
+        If blocks come avg every 600 seconds with accurate timestamp, then
+        MTP lags about 3000 seconds behind the most recent timestamp, with
+        standard deviation of ~1350 seconds. Some tricky points: blocks
+        could come in 2 hours into the future, the timestamps don't have
+        to be monotonic, and our clock might be wrong!
+
+        Possible values:
+
+        0 : can refund right now
+        600 : can refund once next block is mined
+        >600 : estimate in seconds of remaining time
+        """
+        blockchain = self.network.blockchain()
+        curheight = blockchain.height()
+        rtime = self.contract.refund_time
+        now = int(time())  # computer clock time
+
+        if curheight < 10:
+            raise RuntimeError('blockchain too short')
+
+        # get last 11 times
+        times = [blockchain.read_header(h, None)['timestamp']
+                 for h in range(curheight - 10, curheight + 1)
+                 ]
+        if len(times) != 11:
+            raise RuntimeError('error calculating MTP')
+        mtp_now = sorted(times)[5]
+
+        # check if refund can be done right now
+        d = rtime - mtp_now
+        if d < 0:
+            return 0
+
+        if d > 7200:
+            return d
+
+        # Calculate MTP for next block, assuming it comes in 10 minutes and will be timestamped properly.
+        sorted(times[1:] + [now+600])
+        times.append(int(time()) + 600)
+        times.pop(0)
+        times.sort()
+        d2 = rtime - sorted(times)[5]
+        return max(600, d2+600)

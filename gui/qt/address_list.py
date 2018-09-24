@@ -176,6 +176,7 @@ class AddressList(MyTreeWidget):
                 menu.addAction(_("Private key"), lambda: self.parent.show_private_key(addr))
             if not is_multisig and not self.wallet.is_watching_only():
                 menu.addAction(_("Openswap testing"), lambda: self.parent.open_openswaptest(addr))
+                menu.addAction(_("Openswap testing2"), lambda: self.parent.open_openswaptest2(addr))
                 menu.addAction(_("Open in BCHmessage"), lambda: self.parent.open_bchmessage(addr))
                 menu.addAction(_("Sign/verify message"), lambda: self.parent.sign_verify_message(addr))
                 menu.addAction(_("Encrypt/decrypt message"), lambda: self.parent.encrypt_message(addr))

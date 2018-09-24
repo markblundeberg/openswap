@@ -327,7 +327,10 @@ class Abstract_Wallet(PrintError):
             self.save_transactions()
 
     def basename(self):
-        return os.path.basename(self.storage.path)
+        if self.storage.path:
+            return os.path.basename(self.storage.path)
+        else:
+            return str(self.storage)
 
     def save_addresses(self):
         addr_dict = {

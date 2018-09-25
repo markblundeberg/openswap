@@ -308,7 +308,12 @@ class Channel:
         self.address = Address.from_multisig_script(self.redeemscript)
 
     def auth_encrypt(self, message):
-        """Authenticated encrypt; adds 32 bytes (IV, MAC)."""
+        """Authenticated encrypt; adds 32 bytes (IV, MAC).
+
+        No -- need to MAC in the source pubkey to prevent replay attacks by
+        third parties.
+        """
+        return 'BAD'
         iv_ciphertext = aes_encrypt(self.chankey, message)
         mac = hmac.new(self.chankey, iv_ciphertext, 'sha256').digest()
         return iv_ciphertext + mac[:16]

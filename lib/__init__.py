@@ -2,7 +2,8 @@ from .version import PACKAGE_VERSION
 from .util import format_satoshis, print_msg, print_error, set_verbosity
 from .wallet import Synchronizer, Wallet
 from .storage import WalletStorage
-from .network import Network, pick_random_server
+from .network_BTC import Network, pick_random_server
+from .network_BCH import Network, pick_random_server
 from .interface import Connection, Interface
 from .simple_config import SimpleConfig, get_config, set_config
 from . import bitcoin

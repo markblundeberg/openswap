@@ -31,7 +31,6 @@ import jsonrpclib
 from .jsonrpc import VerifyingJSONRPCServer
 
 from .version import PACKAGE_VERSION
-from .network import Network
 from .util import json_decode, DaemonThread
 from .util import print_error, to_string
 from .wallet import Wallet
@@ -119,6 +118,13 @@ class Daemon(DaemonThread):
     def __init__(self, config, fd, is_gui):
         DaemonThread.__init__(self)
         self.config = config
+        self.wallets = {}
+        path = config.get_wallet_path()
+        self.wallet = self.load_wallet(path, config.get('password'))
+        if self.wallet.storage.get('cryptocurrency','') == 'BTC':
+            from .network_BTC import Network
+        else:
+            from .network_BCH import Network
         if config.get('offline'):
             self.network = None
         else:
@@ -128,7 +134,7 @@ class Daemon(DaemonThread):
         if self.network:
             self.network.add_jobs([self.fx])
         self.gui = None
-        self.wallets = {}
+
         # Setup JSONRPC server
         self.init_server(config, fd, is_gui)
 
@@ -169,9 +175,8 @@ class Daemon(DaemonThread):
         if sub in [None, 'start']:
             response = "Daemon already running"
         elif sub == 'load_wallet':
-            path = config.get_wallet_path()
-            wallet = self.load_wallet(path, config.get('password'))
-            self.cmd_runner.wallet = wallet
+            self.start_network(self.wallet)
+            self.cmd_runner.wallet = self.wallet
             response = True
         elif sub == 'close_wallet':
             path = config.get_wallet_path()
@@ -236,9 +241,11 @@ class Daemon(DaemonThread):
         if storage.get_action():
             return
         wallet = Wallet(storage)
-        wallet.start_threads(self.network)
         self.wallets[path] = wallet
         return wallet
+
+    def setup_network(self, wallet):
+        wallet.start_threads(self.network)
 
     def add_wallet(self, wallet):
         path = wallet.storage.path

@@ -23,7 +23,6 @@
 
 import time
 import queue
-import os
 import stat
 import errno
 import random
@@ -32,16 +31,15 @@ import select
 from collections import defaultdict
 import threading
 import socket
-import json
 
 import socks
 from . import util
 from . import bitcoin
 from .bitcoin import *
-from .networks import NetworkConstants
+from .simple_config import SimpleConfig
 from .i18n import _
 from .interface import Connection, Interface
-from . import blockchain
+from . import blockchain_BCH
 from .version import PACKAGE_VERSION, PROTOCOL_VERSION
 
 
@@ -75,6 +73,7 @@ def parse_servers(result):
             servers[host] = out
     return servers
 
+
 def filter_version(servers):
     def is_recent(version):
         try:
@@ -94,13 +93,13 @@ def filter_protocol(hostmap, protocol = 's'):
             eligible.append(serialize_server(host, port, protocol))
     return eligible
 
+
 def pick_random_server(hostmap = None, protocol = 's', exclude_set = set()):
     if hostmap is None:
         hostmap = bitcoin.NetworkConstants.DEFAULT_SERVERS
     eligible = list(set(filter_protocol(hostmap, protocol)) - exclude_set)
     return random.choice(eligible) if eligible else None
 
-from .simple_config import SimpleConfig
 
 proxy_modes = ['socks4', 'socks5', 'http']
 
@@ -169,7 +168,7 @@ class Network(util.DaemonThread):
         util.DaemonThread.__init__(self)
         self.config = SimpleConfig(config) if isinstance(config, dict) else config
         self.num_server = 10 if not self.config.get('oneserver') else 0
-        self.blockchains = blockchain.read_blockchains(self.config)
+        self.blockchains = blockchain_BCH.read_blockchains(self.config)
         self.print_error("blockchains", self.blockchains.keys())
         self.blockchain_index = config.get('blockchain_index', 0)
         if self.blockchain_index not in self.blockchains.keys():
@@ -254,7 +253,7 @@ class Network(util.DaemonThread):
         [callback(event, *args) for callback in callbacks]
 
     def recent_servers_file(self):
-        return os.path.join(self.config.path, "recent-servers")
+        return os.path.join(self.config.path, "recent-servers.json")
 
     def read_recent_servers(self):
         if not self.config.path:
@@ -262,14 +261,15 @@ class Network(util.DaemonThread):
         try:
             with open(self.recent_servers_file(), "r", encoding='utf-8') as f:
                 data = f.read()
-                return json.loads(data)
+                return json.loads(data)['btc']
         except:
             return []
 
     def save_recent_servers(self):
         if not self.config.path:
             return
-        s = json.dumps(self.recent_servers, indent=4, sort_keys=True)
+        server_map = {'bch': self.recent_servers}
+        s = json.dumps(server_map, indent=4, sort_keys=True)
         try:
             with open(self.recent_servers_file(), "w", encoding='utf-8') as f:
                 f.write(s)
@@ -843,8 +843,8 @@ class Network(util.DaemonThread):
 
             data = bfh(hexdata)
             try:
-                blockchain.verify_proven_chunk(request_base_height, data)
-            except blockchain.VerifyError as e:
+                blockchain_BCH.verify_proven_chunk(request_base_height, data)
+            except blockchain_BCH.VerifyError as e:
                 interface.print_error('verify_proven_chunk failed: {}'.format(e))
                 self.connection_down(interface.server)
                 return
@@ -945,9 +945,9 @@ class Network(util.DaemonThread):
             hexheader = result
 
         # Simple header request.
-        header = blockchain.deserialize_header(bfh(hexheader), height)
+        header = blockchain_BCH.deserialize_header(bfh(hexheader), height)
         # Is there a blockchain that already includes this header?
-        chain = blockchain.check_header(header)
+        chain = blockchain_BCH.check_header(header)
         if interface.mode == 'backward':
             if chain:
                 interface.print_error("binary search")
@@ -1133,7 +1133,7 @@ class Network(util.DaemonThread):
 
         header_hex = header_dict['hex']
         height = header_dict['height']
-        header = blockchain.deserialize_header(bfh(header_hex), height)
+        header = blockchain_BCH.deserialize_header(bfh(header_hex), height)
 
         if bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT is not None:
             if height <= bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT:
@@ -1150,14 +1150,14 @@ class Network(util.DaemonThread):
         if interface.mode != 'default':
             return
 
-        b = blockchain.check_header(header) # Does it match the hash of a known header.
+        b = blockchain_BCH.check_header(header) # Does it match the hash of a known header.
         if b:
             interface.blockchain = b
             self.switch_lagging_interface()
             self.notify('updated')
             self.notify('interfaces')
             return
-        b = blockchain.can_connect(header) # Is it the next header on a given blockchain.
+        b = blockchain_BCH.can_connect(header) # Is it the next header on a given blockchain.
         if b:
             interface.blockchain = b
             b.save_header(header)
@@ -1247,7 +1247,7 @@ class Network(util.DaemonThread):
 
         header_hash = Hash(bfh(header))
         byte_branches = [ bytes(reversed(bfh(v))) for v in merkle_branch ]
-        proven_merkle_root = blockchain.root_from_proof(header_hash, byte_branches, header_height)
+        proven_merkle_root = blockchain_BCH.root_from_proof(header_hash, byte_branches, header_height)
         if proven_merkle_root != expected_merkle_root:
             interface.print_error("Sent incorrect merkle branch, expected: {}, proved: {}".format(bitcoin.NetworkConstants.VERIFICATION_BLOCK_MERKLE_ROOT, util.hfu(reversed(proven_merkle_root))))
             return False

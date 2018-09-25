@@ -24,7 +24,7 @@ def set_config(c):
 
 
 FINAL_CONFIG_VERSION = 2
-
+FEE_ETA_TARGETS = [25, 10, 5, 2]
 
 class SimpleConfig(PrintError):
     """
@@ -247,7 +247,7 @@ class SimpleConfig(PrintError):
     def save_last_wallet(self, wallet):
         if self.get('wallet_path') is None:
             path = wallet.storage.path
-            self.set_key('gui_last_wallet', path)
+            self.set_key('gui_last_wallet_'+cryptocurrency, path)
 
     def max_fee_rate(self):
         f = self.get('max_fee_rate', MAX_FEE_RATE)

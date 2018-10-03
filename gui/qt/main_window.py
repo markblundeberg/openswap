@@ -49,11 +49,12 @@ from electroncash.i18n import _
 from electroncash.util import (format_time, format_satoshis, PrintError,
                            format_satoshis_plain, NotEnoughFunds, ExcessiveFee,
                            UserCancelled, bh2u, bfh, format_fee_satoshis)
-import electroncash.web as web
 from electroncash import Transaction
 from electroncash import util, bitcoin, commands
 from electroncash import paymentrequest
 from electroncash.wallet import Multisig_Wallet, sweep_preparations
+from electroncash import daemon
+
 try:
     from electroncash.plot import plot_history
 except:
@@ -104,14 +105,13 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
     cashaddr_toggled_signal = pyqtSignal()
     history_updated_signal = pyqtSignal()
 
-    def __init__(self, gui_object, wallet):
+    def __init__(self, gui_object, wallet, currency, plugins):
         QMainWindow.__init__(self)
-
+        self.currency = currency
         self.gui_object = gui_object
         self.config = config = gui_object.config
-
         self.setup_exception_hook()
-
+        self.plugins = plugins
         self.network = gui_object.daemon.network
         self.fx = gui_object.daemon.fx
         self.invoices = wallet.invoices
@@ -454,7 +454,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
                 self.show_critical(_("Electron Cash was unable to copy your wallet file to the specified location.") + "\n" + str(reason), title=_("Unable to create backup"))
 
     def update_recently_visited(self, filename):
-        recent = self.config.get('recently_open', [])
+        recent = self.config.get('recently_open_'+self.currency, [])
         try:
             sorted(recent)
         except:
@@ -467,7 +467,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
             if os.path.exists(k):
                 recent2.append(k)
         recent = recent2[:5]
-        self.config.set_key('recently_open', recent)
+        self.config.set_key('recently_open_'+self.currency, recent)
         self.recently_visited_menu.clear()
         for i, k in enumerate(sorted(recent)):
             b = os.path.basename(k)
@@ -499,6 +499,9 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         menubar = QMenuBar()
 
         file_menu = menubar.addMenu(_("&File"))
+        self.open_cryptocurrency = file_menu.addMenu(_("&Open Crypto Currency"))
+        self.open_cryptocurrency.addAction(_("&BTC"), self.btc_wallet)
+        self.open_cryptocurrency.addAction(_("&BCH"), self.bch_wallet)
         self.recently_visited_menu = file_menu.addMenu(_("&Recently open"))
         file_menu.addAction(_("&Open"), self.open_wallet).setShortcut(QKeySequence.Open)
         file_menu.addAction(_("&New/Restore"), self.new_wallet).setShortcut(QKeySequence.New)
@@ -1684,7 +1687,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         try:
             out = web.parse_URI(URI, self.on_pr)
         except Exception as e:
-            self.show_error(_('Invalid bitcoincash URI:') + '\n' + str(e))
+            self.show_error(_('Got Invalid bitcoincash URI:') + '\n' + str(e))
             return
         self.show_send_tab()
         r = out.get('r')
@@ -2626,6 +2629,20 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
             else:
                 import json
                 f.write(json.dumps(lines, indent=4))
+
+    def btc_wallet(self):
+        print("open btc wallet")
+        currency = "BTC"
+        fd, server = daemon.get_fd_or_server(self.config, currency)
+        if fd is not None:
+            d = daemon.Daemon(self.config, fd,currency, True)
+            d.start()
+            d.init_gui(self.config, self.plugins)
+        #else:
+        #    result = server.gui(self.config)
+
+    def bch_wallet(self):
+        print("bch is default wallet")
 
     def sweep_key_dialog(self):
         addresses = self.wallet.get_unused_addresses()

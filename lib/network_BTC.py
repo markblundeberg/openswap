@@ -215,7 +215,7 @@ class Network(util.DaemonThread):
         # to or have an ongoing connection with
         self.interface = None
         self.interfaces = {}
-        self.auto_connect = self.config.get('auto_connect', True)
+        self.auto_connect = self.config.get('auto_connect_BTC', True)
         self.connecting = set()
         self.requested_chunks = set()
         self.socket_queue = queue.Queue()
@@ -241,7 +241,7 @@ class Network(util.DaemonThread):
     def read_recent_servers(self):
         if not self.config.path:
             return []
-        path = os.path.join(self.config.path, "recent_servers.json")
+        path = os.path.join(self.config.path, "recent-servers.json")
         try:
             with open(path, "r", encoding='utf-8') as f:
                 data = f.read()
@@ -253,7 +253,7 @@ class Network(util.DaemonThread):
         if not self.config.path:
             return
         server_map = {'btc': self.recent_servers}
-        path = os.path.join(self.config.path, "recent_servers.json")
+        path = os.path.join(self.config.path, "recent-servers.json")
         s = json.dumps(server_map, indent=4, sort_keys=True)
         try:
             with open(path, "w") as f:
@@ -449,7 +449,7 @@ class Network(util.DaemonThread):
                 int(proxy['port'])
         except:
             return
-        self.config.set_key('auto_connect', auto_connect, False)
+        self.config.set_key('auto_connect_BTC', auto_connect, False)
         self.config.set_key("proxy", proxy_str, False)
         self.config.set_key("server", server, True)
         # abort if changes were not allowed by config

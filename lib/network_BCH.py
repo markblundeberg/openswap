@@ -229,7 +229,7 @@ class Network(util.DaemonThread):
         # to or have an ongoing connection with
         self.interface = None                   # note: needs self.interface_lock
         self.interfaces = {}                    # note: needs self.interface_lock
-        self.auto_connect = self.config.get('auto_connect', True)
+        self.auto_connect = self.config.get('auto_connect_BCH', True)
         self.connecting = set()
         self.requested_chunks = set()
         self.socket_queue = queue.Queue()
@@ -457,7 +457,7 @@ class Network(util.DaemonThread):
                 int(proxy['port'])
         except:
             return
-        self.config.set_key('auto_connect', auto_connect, False)
+        self.config.set_key('auto_connect_BCH', auto_connect, False)
         self.config.set_key("proxy", proxy_str, False)
         self.config.set_key("server", server, True)
         # abort if changes were not allowed by config

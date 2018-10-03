@@ -52,6 +52,7 @@ if jnius:
 script_dir = os.path.dirname(os.path.realpath(__file__))
 is_bundle = getattr(sys, 'frozen', False)
 is_local = not is_bundle and os.path.exists(os.path.join(script_dir, "electron-cash.desktop"))
+is_local = not is_bundle and os.path.exists(os.path.join(script_dir, "electron-cash.desktop"))
 is_android = 'ANDROID_DATA' in os.environ
 
 # move this back to gui/kivy/__init.py once plugins are moved
@@ -104,8 +105,6 @@ from electroncash.commands import get_parser, known_commands, Commands, config_v
 from electroncash import daemon
 from electroncash import keystore
 from electroncash.mnemonic import Mnemonic
-import electroncash_plugins
-import electroncash.web as web
 
 # get password routine
 def prompt_password(prompt, confirm=True):
@@ -302,6 +301,7 @@ def init_plugins(config, gui_name):
 
 if __name__ == '__main__':
     # The hook will only be used in the Qt GUI right now
+
     util.setup_thread_excepthook()
     # on osx, delete Process Serial Number arg generated for apps launched in Finder
     sys.argv = list(filter(lambda x: not x.startswith('-psn'), sys.argv))
@@ -346,7 +346,7 @@ if __name__ == '__main__':
         f = lambda key: config_options[key] is not None and key not in config_variables.get(args.cmd, {}).keys()
         config_options = {key: config_options[key] for key in filter(f, config_options.keys())}
         if config_options.get('server'):
-            config_options['auto_connect'] = False
+            config_options['auto_connect_BCH'] = False
 
     config_options['cwd'] = os.getcwd()
 
@@ -374,23 +374,25 @@ if __name__ == '__main__':
             sys.exit(1)
         config_options['url'] = uri
 
+    if not config_options.get('cryptocurrency'):
+        config_options['cryptocurrency'] = 'bch'
+
     # todo: defer this to gui
     config = SimpleConfig(config_options)
     cmdname = config.get('cmd')
-
     # run non-RPC commands separately
     if cmdname in ['create', 'restore']:
         run_non_RPC(config)
         sys.exit(0)
 
     if cmdname == 'gui':
-        fd, server = daemon.get_fd_or_server(config)
+        currency = 'BCH'
+        fd, server = daemon.get_fd_or_server(config, currency)
         if fd is not None:
             plugins = init_plugins(config, config.get('gui', 'qt'))
-            d = daemon.Daemon(config, fd, True)
+            d = daemon.Daemon(config, fd, currency, True)
             d.start()
             d.init_gui(config, plugins)
-            sys.exit(0)
         else:
             result = server.gui(config_options)
 

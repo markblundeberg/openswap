@@ -86,7 +86,7 @@ class QNetworkUpdatedSignalObject(QObject):
 
 class ElectrumGui:
 
-    def __init__(self, config, daemon, plugins):
+    def __init__(self, config, daemon, plugins, currency):
         set_language(config.get('language'))
         # Uncomment this call to verify objects are being properly
         # GC-ed when windows are closed
@@ -100,6 +100,7 @@ class ElectrumGui:
         self.config = config
         self.daemon = daemon
         self.plugins = plugins
+        self.currency = currency
         self.windows = []
         self.efilter = OpenFileEventFilter(self.windows)
         self.app = QElectrumApplication(sys.argv)
@@ -177,7 +178,7 @@ class ElectrumGui:
         self.nd.show()
 
     def create_window_for_wallet(self, wallet):
-        w = ElectrumWindow(self, wallet)
+        w = ElectrumWindow(self, wallet, self.currency, self.plugins)
         self.windows.append(w)
         self.build_tray_menu()
         # FIXME: Remove in favour of the load_wallet hook
@@ -196,7 +197,7 @@ class ElectrumGui:
                 wallet = self.daemon.load_wallet(path, None)
                 if not wallet:
                     storage = WalletStorage(path, manual_upgrades=True)
-                    wizard = InstallWizard(self.config, self.app, self.plugins, storage)
+                    wizard = InstallWizard(self.config, self.app, self.plugins, self.currency, storage)
                     try:
                         wallet = wizard.run_and_get_wallet()
                     except UserCancelled:
@@ -233,14 +234,14 @@ class ElectrumGui:
         self.build_tray_menu()
         # save wallet path of last open window
         if not self.windows:
-            self.config.save_last_wallet(window.wallet)
+            self.config.save_last_wallet(window.wallet,self.currency)
         run_hook('on_close_window', window)
 
     def init_network(self):
         # Show network dialog if config does not exist
         if self.daemon.network:
-            if self.config.get('auto_connect') is None:
-                wizard = InstallWizard(self.config, self.app, self.plugins, None)
+            if self.config.get('auto_connect_'+self.currency) is None:
+                wizard = InstallWizard(self.config, self.app, self.plugins, self.currency, None)
                 wizard.init_network(self.daemon.network)
                 wizard.terminate()
 
@@ -255,8 +256,8 @@ class ElectrumGui:
             traceback.print_exc(file=sys.stdout)
             return
         self.timer.start()
-        self.config.open_last_wallet()
-        path = self.config.get_wallet_path()
+        self.config.open_last_wallet(self.currency)
+        path = self.config.get_wallet_path(self.currency)
         if not self.start_new_window(path, self.config.get('url')):
             return
         signal.signal(signal.SIGINT, lambda *args: self.app.quit())

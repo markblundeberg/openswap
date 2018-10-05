@@ -25,12 +25,13 @@ def show_dialog(main_window, key):
 
 
 class BCHMessageDialog(QDialog):
-    def __init__(self, parent, key):
+    def __init__(self, parent, pmw):
         # top level window
         QDialog.__init__(self, parent=None)
-        self.key = key
-        self.address = key.address
-        pubkey = key.pubkey.hex()
+        self.pmw = pmw
+        self.key = pmw.key
+        self.address = self.key.address
+        pubkey = self.key.pubkey.hex()
 
         self.parent = parent
         self.config = parent.config
@@ -76,7 +77,11 @@ class BCHMessageDialog(QDialog):
 
         vbox.addLayout(hbox)
 
-        self.hw.update()
+        def on_success(result):
+            self.hw.update()
+        d = WaitingDialog(self, _('Opening...'), pmw.start,
+                          on_success, None)
+        d.show()
 
     def update_addr(self):
         self.addr_e.setText(self.address.to_full_ui_string())
@@ -143,44 +148,10 @@ class BMHistoryList(MyTreeWidget):
         self.monospaceFont = QFont(MONOSPACE_FONT)
         self.invoiceIcon = QIcon(":icons/seal")
         self.statusIcons = {}
-        self.cache_parsed = dict()
-        self.known_pubkeys = dict()
 
     def refresh_headers(self):
         headers = [_('Height'), _('Who'), _('Message') ]
         self.update_headers(headers)
-
-    def get_mesg(self, tx_hash):
-        try:
-            return self.cache_parsed[tx_hash]
-        except KeyError:
-            pass
-        tx = self.wallet.transactions[tx_hash]
-        try:
-            source,dest,callback = bchmessage.parse_tx(tx)
-            self.known_pubkeys[Address.from_pubkey(source)] = source
-        except bchmessage.ParseError as e:
-            # uncomment the following to debug why transactions are not appearing
-            #self.insertTopLevelItem(0, SortableTreeWidgetItem(['ERR','',str(e)]))
-            self.cache_parsed[tx_hash] = (None, None, None)
-            return None, None, None
-
-        # we have a candidate tx to read, so we need to get its parent in order
-        # to check the signature
-        in0 = tx.inputs()[0]
-        self.wallet.add_input_info(in0)
-        if not in0.get('value', None):
-            # missing prevtx's value... need to get!
-            raw = self.parent.network.synchronous_get(('blockchain.transaction.get', [in0['prevout_hash']]))
-            if raw:
-                from electroncash.transaction import Transaction
-                prevtx = Transaction(raw)
-                in0['value'] = prevtx.outputs()[in0['prevout_n']][2]
-            else:
-                return None, None, None # couldn't get parent transaction
-        m = callback()
-        self.cache_parsed[tx_hash] = (source,dest,m)
-        return (source, dest, m)
 
     def on_update(self):
         item = self.currentItem()
@@ -188,6 +159,7 @@ class BMHistoryList(MyTreeWidget):
         self.clear()
 
         self.wallet = self.parent.wallet
+        pmw = self.parent.pmw
         key = self.parent.key
         mypubkey  = key.pubkey
         myaddress = self.address
@@ -195,11 +167,15 @@ class BMHistoryList(MyTreeWidget):
         # first iteration - parse txes and gather pubkeys
         messages = []
         for tx_hash, height in self.wallet.get_address_history(myaddress):
-            s,d,m = self.get_mesg(tx_hash)
-            messages.append((height,tx_hash,s,d,m))
-
-        # second iteration -- decode and display
-        for height,tx_hash,s,d,m in messages:
+            info = pmw.messageinfo.get(tx_hash)
+            if not info:
+                continue
+            s = info['src']
+            d = info['dst']
+            if info['status'] == 'processing':
+                messagebytes = b'processing'
+            else:
+                messagebytes = info.get('message')
             # Figure out message sender/recipient
             from_me = (s == mypubkey)
             to_me   = (d == myaddress)
@@ -208,7 +184,7 @@ class BMHistoryList(MyTreeWidget):
                 who = "self"
                 otherpubkey = mypubkey
             elif from_me:
-                otherpubkey = self.known_pubkeys.get(d, None)
+                otherpubkey = pmw.known_pubkeys.get(d, None)
                 if otherpubkey:
                     who = "X\u2190"
                 else:
@@ -221,8 +197,7 @@ class BMHistoryList(MyTreeWidget):
 #                otherpubkey = None
                 continue
 
-            if otherpubkey:
-                messagebytes = key.read_private_message(m, otherpubkey)
+            if messagebytes:
                 try:
                     message = repr(messagebytes.decode('utf8'))
                 except:

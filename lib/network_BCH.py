@@ -261,7 +261,7 @@ class Network(util.DaemonThread):
         try:
             with open(self.recent_servers_file(), "r", encoding='utf-8') as f:
                 data = f.read()
-                return json.loads(data)['btc']
+                return json.loads(data)['bch']
         except:
             return []
 

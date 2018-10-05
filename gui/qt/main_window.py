@@ -399,7 +399,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         if self.wallet.is_watching_only():
             self.warn_if_watching_only()
             extra.append(_('watching only'))
-        title += '  [%s]'% ', '.join(extra)
+        title += '  ['+self.currency+' - %s]'% ', '.join(extra)
         self.setWindowTitle(title)
         self.password_menu.setEnabled(self.wallet.can_change_password())
         self.import_privkey_menu.setVisible(self.wallet.can_import_privkey())

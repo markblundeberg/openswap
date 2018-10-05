@@ -2262,7 +2262,8 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         from electroncash import bchmessage
 
         key = bchmessage.MessagingKey.from_wallet(self.wallet, address, password)
-        d = show_dialog(self, key)
+        pmw = bchmessage.PrivMessageWatcher(self.wallet, key)
+        d = show_dialog(self, pmw)
 
     @protected
     def open_openswaptest(self, address, password):

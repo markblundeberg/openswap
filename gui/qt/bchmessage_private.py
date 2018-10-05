@@ -25,6 +25,8 @@ def show_dialog(main_window, key):
 
 
 class BCHMessageDialog(QDialog):
+    gotDecrypt = pyqtSignal(str)
+
     def __init__(self, parent, pmw):
         # top level window
         QDialog.__init__(self, parent=None)
@@ -77,8 +79,14 @@ class BCHMessageDialog(QDialog):
 
         vbox.addLayout(hbox)
 
+        self.show()
+
+        self.gotDecrypt.connect(self.hw.got_decrypted)
+
         def on_success(result):
+            pmw.callbacks_decrypted.append(self.gotDecrypt.emit)
             self.hw.update()
+
         d = WaitingDialog(self, _('Opening...'), pmw.start,
                           on_success, None)
         d.show()
@@ -152,6 +160,9 @@ class BMHistoryList(MyTreeWidget):
     def refresh_headers(self):
         headers = [_('Height'), _('Who'), _('Message') ]
         self.update_headers(headers)
+
+    def got_decrypted(self, tx_hash):
+        self.update()
 
     def on_update(self):
         item = self.currentItem()

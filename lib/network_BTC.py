@@ -187,7 +187,7 @@ class Network(util.DaemonThread):
         self.message_id = 0
         self.debug = False
         self.irc_servers = {} # returned by interface (list from irc)
-        self.recent_servers = self.read_recent_servers()
+        self.recent_servers = self.read_recent_servers('btc')
         self.banner = ''
         self.donation_address = ''
         self.relay_fee = None
@@ -238,25 +238,27 @@ class Network(util.DaemonThread):
             callbacks = self.callbacks[event][:]
         [callback(event, *args) for callback in callbacks]
 
-    def read_recent_servers(self):
+    def recent_servers_file(self):
+        return os.path.join(self.config.path, "recent-servers.json")
+
+    def read_recent_servers(self, currency):
         if not self.config.path:
             return []
-        path = os.path.join(self.config.path, "recent-servers.json")
         try:
-            with open(path, "r", encoding='utf-8') as f:
+            with open(self.recent_servers_file(), "r", encoding='utf-8') as f:
                 data = f.read()
-                return json.loads(data)['btc']
+                return json.loads(data)[currency]
         except:
             return []
 
     def save_recent_servers(self):
         if not self.config.path:
             return
-        server_map = {'btc': self.recent_servers}
-        path = os.path.join(self.config.path, "recent-servers.json")
+        bch_server_list = self.read_recent_servers('bch')
+        server_map = {'btc': self.recent_servers, 'bch': bch_server_list}
         s = json.dumps(server_map, indent=4, sort_keys=True)
         try:
-            with open(path, "w") as f:
+            with open(self.recent_servers_file(), "w") as f:
                 f.write(s)
         except:
             pass

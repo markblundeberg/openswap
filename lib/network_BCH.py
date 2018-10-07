@@ -201,7 +201,7 @@ class Network(util.DaemonThread):
         self.checkpoint_servers_verified = {}
         self.debug = False
         self.irc_servers = {} # returned by interface (list from irc)
-        self.recent_servers = self.read_recent_servers()
+        self.recent_servers = self.read_recent_servers('bch')
 
         self.banner = ''
         self.donation_address = ''
@@ -255,20 +255,21 @@ class Network(util.DaemonThread):
     def recent_servers_file(self):
         return os.path.join(self.config.path, "recent-servers.json")
 
-    def read_recent_servers(self):
+    def read_recent_servers(self, currency):
         if not self.config.path:
             return []
         try:
             with open(self.recent_servers_file(), "r", encoding='utf-8') as f:
                 data = f.read()
-                return json.loads(data)['bch']
+                return json.loads(data)[currency]
         except:
             return []
 
     def save_recent_servers(self):
         if not self.config.path:
             return
-        server_map = {'bch': self.recent_servers}
+        btc_server_list = self.read_recent_servers('btc')
+        server_map = {'bch': self.recent_servers,'btc': btc_server_list}
         s = json.dumps(server_map, indent=4, sort_keys=True)
         try:
             with open(self.recent_servers_file(), "w", encoding='utf-8') as f:

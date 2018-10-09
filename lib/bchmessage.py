@@ -33,7 +33,7 @@ import time
 import threading
 from functools import partial
 
-
+from hmac import compare_digest  # constant time compare!
 
 from .address import Address, ScriptOutput
 from . import bitcoin
@@ -156,7 +156,7 @@ import secrets
 def aes_encrypt(key, plaintext, iv=None):
     """AES encrypt arbitrary length message. (uses CTR mode with big-endian increment)
 
-    Returns iv_ciphertext which is 16 bytes longer than#WEAKNESS the input plaintext.
+    Returns iv_ciphertext which is 16 bytes longer than the input plaintext.
 
     If iv not supplied, uses random 16 bytes from `secrets` module.
     Generally you should not provide iv (reuse of iv on two different messages will leak plaintext!).
@@ -346,9 +346,7 @@ class Channel:
         h.update(iv_ciphertext)
         mac2 = h.digest()[:16]
 
-        #WEAKNESS -- uses non-constant-time comparison (trivially forged
-        # in timing oracle mode!)
-        if mac1 != mac2:
+        if not compare_digest(mac1, mac2):
             raise AuthenticationError
         return aes_decrypt(self.chankey, iv_ciphertext)
 

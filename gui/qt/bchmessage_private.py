@@ -89,7 +89,6 @@ class BCHMessageDialog(QDialog):
 
         d = WaitingDialog(self, _('Opening...'), pmw.start,
                           on_success, None)
-        d.show()
 
     def update_addr(self):
         self.addr_e.setText(self.address.to_full_ui_string())
@@ -143,23 +142,20 @@ class BCHMessageDialog(QDialog):
 
 
 class BMHistoryList(MyTreeWidget):
-    filter_columns = [2, 3, 4]  # Date, Description, Amount
+#    filter_columns = [2, 3, 4]  # Date, Description, Amount
 
     def __init__(self, parent):
-        MyTreeWidget.__init__(self, parent, self.create_menu, [], 3)
+        MyTreeWidget.__init__(self, parent, self.create_menu,
+                              [_('Height'), _('Who'), _('Message') ],
+                              2, [])
         self.address = parent.key.address
 
-        self.refresh_headers()
         self.setSortingEnabled(True)
         self.sortByColumn(0, Qt.AscendingOrder)
 
         self.monospaceFont = QFont(MONOSPACE_FONT)
         self.invoiceIcon = QIcon(":icons/seal")
         self.statusIcons = {}
-
-    def refresh_headers(self):
-        headers = [_('Height'), _('Who'), _('Message') ]
-        self.update_headers(headers)
 
     def got_decrypted(self, tx_hash):
         self.update()

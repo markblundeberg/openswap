@@ -481,7 +481,6 @@ class AddrMessageWatcher:
 
     def stop(self,):
         self.network.unregister_callback(self.on_network)
-        self.update_messages()
 
     def update_messages(self,):
         # first iteration - find new txes
@@ -592,6 +591,7 @@ class PrivMessageWatcher(AddrMessageWatcher):
         self.callbacks_decrypted = []
 
     def on_verified(self, tx_hash):
+        # this is called once the input signature has been verified.
         self.try_decrypt_tx(tx_hash)
 
     def try_decrypt_tx(self, tx_hash):
@@ -616,11 +616,7 @@ class PrivMessageWatcher(AddrMessageWatcher):
             raise Exception("non-involved message")
 
         if other_pubkey:
-            message = self.key.read_private_message(info['data'], other_pubkey)
-        else:
-            message = None
-
-        info['message'] = message
+            info['message'] = self.key.read_private_message(info['data'], other_pubkey)
 
         for cb in list(self.callbacks_decrypted):
             cb(tx_hash)

@@ -2266,20 +2266,13 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         d = show_dialog(self, pmw)
 
     @protected
-    def open_openswaptest(self, address, password):
-        from .openswap_testing import show_dialog
+    def open_openswap(self, address, password):
+        from .openswap_private import show_dialog
         from electroncash import bchmessage
 
         key = bchmessage.MessagingKey.from_wallet(self.wallet, address, password)
-        d = show_dialog(self, key)
-
-    @protected
-    def open_openswaptest2(self, address, password):
-        from .openswap_testing2 import show_dialog
-        from electroncash import bchmessage
-
-        key = bchmessage.MessagingKey.from_wallet(self.wallet, address, password)
-        d = show_dialog(self, key)
+        pmw = bchmessage.PrivMessageWatcher(self.wallet, key)
+        d = show_dialog(self, pmw)
 
     @protected
     def do_decrypt(self, message_e, pubkey_e, encrypted_e, password):

@@ -6,7 +6,12 @@ from collections import namedtuple, defaultdict
 import hashlib
 from time import time
 import struct
-import secrets
+
+try:
+    # python 3.6 +
+    from secrets import token_bytes
+except ModuleNotFoundError:
+    from os import urandom as token_bytes
 
 from . import bitcoin
 from . import bchmessage
@@ -745,7 +750,7 @@ class OpenSwapMessage:
         if autopad:
             l = len(self.to_bytes())
             if l < autopad:
-                self.packets.append(PacketPad(secrets.token_bytes(autopad - l - 1)))
+                self.packets.append(PacketPad(token_bytes(autopad - l - 1)))
 
     @classmethod
     def from_bytes(cls, raw):

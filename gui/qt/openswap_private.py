@@ -2,9 +2,14 @@
 OpenSwap main private messaging -- all messages
 """
 
-import secrets
 import time
 from html import escape
+
+try:
+    # python 3.6 +
+    from secrets import token_bytes
+except ModuleNotFoundError:
+    from os import urandom as token_bytes
 
 from electroncash.i18n import _
 from electroncash.address import Address
@@ -169,7 +174,7 @@ class OpenSwapDialog(QDialog):
 
         if not offer:
             offer = openswap.OfferInfo(
-                    salt = secrets.token_bytes(8),
+                    salt = token_bytes(8),
                     want_rtime = now + 10*3600,
                     give_rtime = now + 5*3600,
                     want_amount = None,
@@ -201,7 +206,7 @@ class OpenSwapDialog(QDialog):
             now = int(time.time())
             # make new offer_info with new salt and new time
             offer = d.get_offerinfo()._replace(
-                    salt = secrets.token_bytes(8),
+                    salt = token_bytes(8),
                     want_rtime = now + 10*3600,
                     give_rtime = now + 5*3600,
                     )
@@ -223,7 +228,7 @@ class OpenSwapDialog(QDialog):
             # make new offer_info with swapped want/give and new salt.
             now = int(time.time())
             offer = openswap.OfferInfo(
-                    salt = secrets.token_bytes(8),
+                    salt = token_bytes(8),
                     want_rtime = now + 10*3600,
                     give_rtime = now + 5*3600,
                     want_amount = oo.give_amount,

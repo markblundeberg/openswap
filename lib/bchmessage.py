@@ -35,6 +35,13 @@ from functools import partial
 
 from hmac import compare_digest  # constant time compare!
 
+try:
+    # python 3.6 +
+    from secrets import token_bytes
+except ModuleNotFoundError:
+    from os import urandom as token_bytes
+
+
 from .address import Address, ScriptOutput
 from . import bitcoin
 
@@ -151,19 +158,18 @@ def ecdh(privkey, theirpubkey):
 ###
 
 import pyaes
-import secrets
 
 def aes_encrypt(key, plaintext, iv=None):
     """AES encrypt arbitrary length message. (uses CTR mode with big-endian increment)
 
     Returns iv_ciphertext which is 16 bytes longer than the input plaintext.
 
-    If iv not supplied, uses random 16 bytes from `secrets` module.
+    If iv not supplied, uses random 16 bytes.
     Generally you should not provide iv (reuse of iv on two different messages will leak plaintext!).
     """
     #WEAKNESS -- unknown if pyaes is constant time
     if iv is None:
-        iv = secrets.token_bytes(16)
+        iv = token_bytes(16)
     else:
         assert len(iv) == 16
     counter = pyaes.Counter(int.from_bytes(iv,'big'))

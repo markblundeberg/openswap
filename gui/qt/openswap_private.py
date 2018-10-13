@@ -165,6 +165,7 @@ class OpenSwapDialog(QDialog):
         now = int(time.time())
         if not other_pubkey:
             d = QInputDialog(parent=self)
+            d.setWindowModality(Qt.WindowModal) # don't freeze all windows
             d.setLabelText(_("Counterparty pubkey"))
 #            d.setTextValue()
             d.exec_()
@@ -423,8 +424,10 @@ class MyHistoryList(MyTreeWidget):
                 # available!
                 act.setEnabled(False)
 
-        if other_pubkey:
-            menu.addAction(_("Write raw message"), lambda: self.parent.write_message(other_pubkey.hex()))
+        if to_me:
+            menu.addAction(_("Reply raw message"), lambda: self.parent.write_message(from_pubkey.hex()))
+        elif to_pubkey:
+            menu.addAction(_("Write another message"), lambda: self.parent.write_message(to_pubkey.hex()))
 
         menu.addAction(_("Copy {}").format(column_title), lambda: self.parent.parent.app.clipboard().setText(column_data))
 

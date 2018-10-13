@@ -25,6 +25,7 @@ import binascii
 import os, sys, re, json
 from collections import defaultdict
 from datetime import datetime
+import decimal
 from decimal import Decimal
 import traceback
 import threading
@@ -432,6 +433,105 @@ def format_satoshis(x, num_zeros=0, decimal_point=8, precision=None, is_diff=Fal
 
 def format_fee_satoshis(fee, num_zeros=0):
     return format_satoshis(fee, num_zeros, 0, precision=num_zeros)
+
+
+def format_satoshis_plain_nofloat(x, decimal_point = 8):
+    """Display a satoshi amount scaled.  Always uses a '.' as a decimal
+    point and has no thousands separator.
+
+    Does not use any floating point representation internally, so no rounding ever occurs.
+    """
+    x = int(x)
+    xstr = str(abs(x))
+
+    if decimal_point > 0:
+        integer_part = xstr[:-decimal_point]
+        fract_part   = xstr[-decimal_point:]
+        fract_part = '0'*(decimal_point - len(fract_part)) + fract_part  # add leading zeros
+        fract_part = fract_part.rstrip('0')  # snip off trailing zeros
+    else:
+        integer_part = xstr
+        fract_part = ''
+    if not integer_part:
+        integer_part = '0'
+    if x < 0:
+        integer_part = '-' + integer_part
+
+    if fract_part:
+        return integer_part + '.' + fract_part
+    else:
+        return integer_part
+
+def format_satoshis_nofloat(x, num_zeros=0, decimal_point=8, precision=None, is_diff=False, whitespaces=False):
+    """ Format the quantity x/10**decimal_point, for integer x.
+
+    Does not use any floating point representation internally, so no rounding ever occurs when precision is None.
+
+    Don't pass values other than nonnegative integers for decimal_point or num_zeros or precision.
+    Undefined things will occur.
+
+    `whitespaces` may be passed as an integer or True (the latter defaulting to 15, as in format_satoshis).
+    """
+    if x is None:
+        return 'unknown'
+    if precision is not None:
+        x = round(int(x), precision - decimal_point)
+    else:
+        x = int(x)
+
+    xstr = str(abs(x))
+
+    if decimal_point > 0:
+        integer_part = xstr[:-decimal_point]
+        fract_part   = xstr[-decimal_point:]
+
+        fract_part = '0'*(decimal_point - len(fract_part)) + fract_part  # add leading zeros
+        fract_part = fract_part.rstrip('0')  # snip off trailing zeros
+    else:
+        integer_part = xstr
+        fract_part = ''
+    if not integer_part:
+        integer_part = '0'
+    if x < 0: # put the sign on
+        integer_part = '-' + integer_part
+    elif is_diff:
+        integer_part = '+' + integer_part
+
+    fract_part += "0" * (num_zeros - len(fract_part)) # restore desired minimum number of fractional figures
+
+    dp = localeconv()['decimal_point']
+    result = integer_part + dp + fract_part
+
+    if whitespaces is True:
+        whitespaces = 15
+    if whitespaces:
+        result += " " * (decimal_point - len(fract_part))
+        result = " " * (whitespaces - len(result)) + result
+
+    return result
+
+def get_satoshis_nofloat(s, decimal_point=8):
+    """ Convert a decimal string to integer.
+
+    e.g., "5.6663" to 566630000 when decimal_point = 8
+
+    Does not round, ever. If too many fractional digits are provided
+    (even zeros) then ValueError is raised.
+    """
+    dec = decimal.Decimal(s)
+    dtup = dec.as_tuple()
+
+    if dtup.exponent < -decimal_point:
+        raise ValueError('Too many fractional digits', s, decimal_point)
+
+    # Create context with right amount of precision; we want to raise Inexact
+    # just in case any rounding occurs (still, it should never happen!).
+    C = decimal.Context(prec=len(dtup.digits), traps=[decimal.Inexact])
+
+    res = int(C.to_integral_exact(C.scaleb(dec, decimal_point)))
+
+    return res
+
 
 def timestamp_to_datetime(timestamp):
     try:

@@ -38,7 +38,7 @@ from hmac import compare_digest  # constant time compare!
 try:
     # python 3.6 +
     from secrets import token_bytes
-except ModuleNotFoundError:
+except ImportError:
     from os import urandom as token_bytes
 
 

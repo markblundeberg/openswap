@@ -10,7 +10,7 @@ import struct
 try:
     # python 3.6 +
     from secrets import token_bytes
-except ModuleNotFoundError:
+except ImportError:
     from os import urandom as token_bytes
 
 from . import bitcoin

@@ -15,6 +15,7 @@ from electroncash import bchmessage
 from electroncash import openswap
 
 from electroncash.util import format_satoshis_plain_nofloat
+from electroncash.util import print_error, print_stderr
 
 from .transaction_dialog import show_transaction
 
@@ -276,10 +277,10 @@ class SwapDialog(QDialog, MessageBoxMixin):
 
         donotuse = _("Do not use this swap.")
         notrecommend = _("Not recommended to start using this swap.")
+        if self.tr2 <= 0:
+            return _("Refund period active."), donotuse
         if self.tr1 - self.tr2 < 3600:
             return _("Badly formed swap! Left contract should refund well after right contract."), donotuse
-        if self.tr2 < 0:
-            return _("Refund period active."), donotuse
         if self.tr1 - self.tr2 > 86400:
             return _("Badly formed swap! Left contract refunds way too late (>24 h) after right contract."), notrecommend
         if self.tr2 < 3600:
@@ -346,8 +347,15 @@ class SwapDialog(QDialog, MessageBoxMixin):
 
         tx = sc.mktx(coins, addr, privkey, secret, self.config.estimate_fee)
 
-        def callback(*args):
-            print("Broadcast callback result:", args)
+        def callback(response):
+            err = response.get('error')
+            if err:
+                try:
+                    print_stderr("Transaction broadcast error", err['code'], err['message'])
+                except:
+                    print_stderr("Transaction broadcast error:", err)
+            else:
+                print_error("Transaction broadcast result:", response)  # --verbose only
         sc.network.broadcast_transaction(tx.serialize(), callback=callback)
 
 class SwapUTXOList(MyTreeWidget):

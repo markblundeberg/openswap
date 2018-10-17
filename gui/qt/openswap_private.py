@@ -24,6 +24,7 @@ from .qrtextedit import ShowQRTextEdit
 
 from electroncash import bchmessage
 from electroncash import openswap
+from electroncash.util import print_error
 
 from .transaction_dialog import show_transaction
 
@@ -49,7 +50,7 @@ TX_ICONS = [
     "confirmed.png",
 ]
 
-class OpenSwapDialog(QDialog):
+class OpenSwapDialog(QDialog, MessageBoxMixin):
     gotDecryptSig = pyqtSignal(str)
 
     def __init__(self, parent, pmw):
@@ -143,15 +144,29 @@ class OpenSwapDialog(QDialog):
 
         hbox = QHBoxLayout()
 
-        def prev():
-            dest_pubkey = bytes.fromhex(address_e.text())
-            messagebytes = message_e.toPlainText().encode('utf8')
-            tx = self.key.create_private_message(self.wallet, dest_pubkey, messagebytes, self.config, fee=None)
-            show_transaction(tx, self.parent)
-            d.accept()
+        def send():
+            try:
+                messagebytes = message_e.toPlainText().encode('utf8')
+            except Exception as e:
+                self.show_error("Unable to encode message.")
+                return
 
-        b = QPushButton(_("Preview"))
-        b.clicked.connect(prev)
+            try:
+                dest_pubkey = bytes.fromhex(address_e.text())
+                _ = bchmessage.ser_to_point(dest_pubkey)  # attempt to
+            except Exception as e:
+                self.show_error("Invalid pubkey.")
+                return
+
+            if len(messagebytes) > 220:
+                self.show_warning("Message bytesize (%d) is over 220, unlikely to broadcast."%(len(messagebytes)))
+                pass
+
+            if self.broadcast_message(dest_pubkey, messagebytes):
+                d.accept()
+
+        b = QPushButton(_("Send"))
+        b.clicked.connect(send)
         hbox.addWidget(b)
 
         b = QPushButton(_("Close"))
@@ -160,6 +175,27 @@ class OpenSwapDialog(QDialog):
         layout.addLayout(hbox, 3, 1)
 
         d.exec_()
+
+    def broadcast_message(self, dest_pubkey, messagebytes):
+        def callback(response):
+            err = response.get('error')
+            if err:
+                try:
+                    print_stderr("Transaction broadcast error", err['code'], err['message'])
+                except:
+                    print_stderr("Transaction broadcast error:", err)
+            else:
+                print_error("Transaction broadcast result:", response)  # --verbose only
+
+        try:
+            tx = self.key.create_private_message(self.wallet, dest_pubkey, messagebytes, self.config)
+            self.network.broadcast_transaction(tx.serialize(), callback=callback)
+            return True
+        except bchmessage.NotEnoughFunds:
+            self.show_error("Not enough funds on this address.")
+        except Exception as e:
+            self.show_error("Error: %s"%(str(e)))
+        return False
 
     def make_offer(self, other_pubkey=None, offer=None):
         now = int(time.time())
@@ -192,13 +228,9 @@ class OpenSwapDialog(QDialog):
                 pak = openswap.PacketOffer.make(self.key.privkey, other_pubkey, offerinfo)
                 offermsg = openswap.OpenSwapMessage([pak], autopad=204)
                 messagebytes = offermsg.to_bytes()
-                tx = self.key.create_private_message(self.wallet, other_pubkey,
-                                                     messagebytes, self.config, fee=None)
-                show_transaction(tx, self.parent)
+                self.broadcast_message(other_pubkey, messagebytes)
             except Exception as e:
-                import traceback
-                traceback.print_exc()
-                self.show_message(str(e))
+                self.show_error(str(e))
 
     def view_offer_as_sender(self, other_pubkey, packet):
         d = OfferInfoDialog(self, packet.offer_info, mode='view_as_sender')
@@ -218,12 +250,11 @@ class OpenSwapDialog(QDialog):
         res = d.exec_()
         if res == 1:  # accept
             offerinfo = d.get_offerinfo()
-            pak = openswap.PacketAccept.make(self.key.privkey, other_pubkey, offerinfo)
-            offermsg = openswap.OpenSwapMessage([pak], autopad=204)
+            accept_packet = openswap.PacketAccept.make(self.key.privkey, other_pubkey, offerinfo)
+            offermsg = openswap.OpenSwapMessage([accept_packet], autopad=204)
             messagebytes = offermsg.to_bytes()
-            tx = self.key.create_private_message(self.wallet, other_pubkey,
-                                                    messagebytes, self.config, fee=None)
-            show_transaction(tx, self.parent)
+            if self.broadcast_message(other_pubkey, messagebytes):
+                self.start_swap(True, other_pubkey, packet, accept_packet)
         elif res == 2:  # edit
             oo = d.get_offerinfo()
             # make new offer_info with swapped want/give and new salt.

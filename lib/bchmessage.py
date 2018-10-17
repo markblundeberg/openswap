@@ -42,8 +42,10 @@ except ImportError:
     from os import urandom as token_bytes
 
 
-from .address import Address, ScriptOutput
+from .address import Address, ScriptOutput, Script, ScriptError, OpCodes
 from . import bitcoin
+from . import transaction
+from .util import NotEnoughFunds
 
 class ParseError(Exception):
     pass
@@ -194,9 +196,6 @@ def aes_decrypt(key, iv_ciphertext):
 ###
 # Transaction parsing (based on electron cash Transaction objects)
 ###
-
-from . import transaction
-from .address import Script, ScriptError, OpCodes
 
 def parse_tx(tx):
     """
@@ -407,6 +406,8 @@ class MessagingKey:
         Creates a transaction that holds a message addressed to dest_pubkey.
 
         Max message length to fit in 223 byte op_return relay limit: 204 bytes
+
+        This can fail with electroncash.util.NotEnoughFunds
         """
         assert wallet.txin_type == 'p2pkh'
 
@@ -420,8 +421,8 @@ class MessagingKey:
                          ]
         if dest_address == self.address:
             # Send-to-self is valid&secure (may be useful for 'note to self').
-            # For send-to-self we just make a change addr.
-            outputs = outputs[:1]
+            # For send-to-self we don't need a dust output.
+            askedoutputs = askedoutputs[:1]
         change_addr = self.address
 
         # only spend coins from this address

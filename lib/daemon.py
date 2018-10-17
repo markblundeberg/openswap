@@ -81,6 +81,7 @@ def get_server(config, currency):
                 else:
                     server_url = 'http://%s:%s@%s:%d' % (
                         rpc_user, rpc_password, host, port)
+
                 server = jsonrpclib.Server(server_url)
             # Test daemon is running
             server.ping()
@@ -119,10 +120,7 @@ class Daemon(DaemonThread):
         DaemonThread.__init__(self)
         self.config = config
         self.currency = currency
-        self.wallets = {}
-        path = config.get_wallet_path(currency)
-        self.wallet = self.load_wallet(path, config.get('password'))
-        #from .network_BTC import Network
+
         if currency == 'BTC':
             from .network_BTC import Network
         else:
@@ -136,11 +134,12 @@ class Daemon(DaemonThread):
         if self.network:
             self.network.add_jobs([self.fx])
         self.gui = None
+        self.wallets = {}
 
         # Setup JSONRPC server
         self.init_server(config, fd, is_gui)
 
-    def init_server(self, config, fd, is_gui):
+    def init_server(self, config, fd,  is_gui):
         host = config.get('rpchost', '127.0.0.1')
         port = config.get('rpcport', 0)
 
@@ -181,7 +180,7 @@ class Daemon(DaemonThread):
             self.cmd_runner.wallet = self.wallet
             response = True
         elif sub == 'close_wallet':
-            path = config.get_wallet_path()
+            path = config.get_wallet_path(self.currency)
             if path in self.wallets:
                 self.stop_wallet(path)
                 response = True
@@ -211,14 +210,7 @@ class Daemon(DaemonThread):
         return response
 
     def run_gui(self, config_options):
-        config = SimpleConfig(config_options)
         if self.gui:
-            #if hasattr(self.gui, 'new_window'):
-            #    path = config.get_wallet_path()
-            #    self.gui.new_window(path, config.get('url'))
-            #    response = "ok"
-            #else:
-            #    response = "error: current GUI does not support multiple windows"
             response = "error: Electron Cash GUI already running"
         else:
             response = "Error: Electron Cash is running in daemon mode. Please stop the daemon first."
@@ -243,11 +235,10 @@ class Daemon(DaemonThread):
         if storage.get_action():
             return
         wallet = Wallet(storage)
+        wallet.start_threads(self.network)
         self.wallets[path] = wallet
         return wallet
 
-    def setup_network(self, wallet):
-        wallet.start_threads(self.network)
 
     def add_wallet(self, wallet):
         path = wallet.storage.path
@@ -301,14 +292,14 @@ class Daemon(DaemonThread):
         self.on_stop()
 
     def stop(self):
-        self.print_error("stopping, removing lockfile")
-        remove_lockfile(get_lockfile(self.config))
+        remove_lockfile(get_lockfile(self.config, self.currency))
         DaemonThread.stop(self)
 
-    def init_gui(self, config, plugins):
-        gui_name = config.get('gui', 'qt')
+    def init_gui(self, plugins):
+        gui_name = self.config.get('gui', 'qt')
         if gui_name in ['lite', 'classic']:
             gui_name = 'qt'
         gui = __import__('electroncash_gui.' + gui_name, fromlist=['electroncash_gui'])
-        self.gui = gui.ElectrumGui(config, self, plugins , self.currency)
-        self.gui.main()
+        self.gui = gui.ElectrumGui(self.config, plugins)
+        self.gui.set_currency_daemon(self.currency, self)
+        self.gui.main(self)

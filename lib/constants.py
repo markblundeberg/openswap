@@ -36,9 +36,15 @@ def read_json(filename, default):
         r = default
     return r
 
+class AbstractNet:
 
-class BitcoinMainnet:
+    @classmethod
+    def max_checkpoint(cls) -> int:
+        return max(0, len(cls.CHECKPOINTS) * 2016 - 1)
 
+class BitcoinMainnet(AbstractNet):
+
+    CURRENCIES = ['BCH', 'BTC']
     TESTNET = False
     WIF_PREFIX = 0x80
     ADDRTYPE_P2PKH = 0

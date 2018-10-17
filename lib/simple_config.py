@@ -202,13 +202,12 @@ class SimpleConfig(PrintError):
 
     def get_wallet_path(self,currency):
         """Set the path of the wallet."""
-        print("getting wallet path")
         # command line -w option
         if self.get('wallet_path'):
             return os.path.join(self.get('cwd'), self.get('wallet_path'))
 
         # path in config file
-        path = self.get('default_wallet_path')
+        path = self.get('default_wallet_path_'+currency)
         if path and os.path.exists(path):
             return path
 

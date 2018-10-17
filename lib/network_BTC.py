@@ -404,7 +404,6 @@ class Network(util.DaemonThread):
             socket._socketobject = socket.socket
             socket._getaddrinfo = socket.getaddrinfo
         if proxy:
-            self.print_error('setting proxy', proxy)
             proxy_mode = proxy_modes.index(proxy["mode"]) + 1
             socks.setdefaultproxy(proxy_mode,
                                   proxy["host"],
@@ -647,6 +646,9 @@ class Network(util.DaemonThread):
     def request_address_history(self, address, callback):
         h = self.addr_to_scripthash(address)
         self.send([('blockchain.scripthash.get_history', [h])], self.overload_cb(callback))
+
+    def request_scripthash_history(self, sh, callback):
+        self.send([('blockchain.scripthash.get_history', [sh])], callback)
 
     def send(self, messages, callback):
         '''Messages is a list of (method, params) tuples'''
@@ -1033,15 +1035,17 @@ class Network(util.DaemonThread):
 
     def blockchain(self):
         if self.interface and self.interface.blockchain is not None:
-            self.blockchain_index = self.interface.blockchain.checkpoint
+            self.blockchain_index = self.interface.blockchain.forkpoint
         return self.blockchains[self.blockchain_index]
 
     def get_blockchains(self):
         out = {}
-        for k, b in self.blockchains.items():
-            r = list(filter(lambda i: i.blockchain==b, list(self.interfaces.values())))
+
+        for chain_id, bc in self.blockchains.items():
+            r = list(filter(lambda i: i.blockchain==bc, list(self.interfaces.values())))
             if r:
-                out[k] = r
+                out[chain_id] = r
+
         return out
 
     def follow_chain(self, index):
@@ -1063,7 +1067,8 @@ class Network(util.DaemonThread):
             self.set_parameters(host, port, protocol, proxy, auto_connect)
 
     def get_local_height(self):
-        return self.blockchain().height()
+        local_height = self.blockchain().height()
+        return local_height
 
     def synchronous_get(self, request, timeout=30):
         q = queue.Queue()

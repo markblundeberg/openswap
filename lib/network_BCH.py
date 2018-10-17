@@ -1143,7 +1143,6 @@ class Network(util.DaemonThread):
 
         interface.tip_header = header
         interface.tip = height
-
         if interface.mode == 'verification':
             self.request_initial_proof_and_headers(interface)
             return

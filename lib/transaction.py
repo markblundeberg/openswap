@@ -401,6 +401,7 @@ class Transaction:
         return self.raw
 
     def __init__(self, raw):
+
         if raw is None:
             self.raw = None
         elif isinstance(raw, str):
@@ -413,7 +414,6 @@ class Transaction:
         self._outputs = None
         self.locktime = 0
         self.version = 1
-        
         # Ephemeral meta-data used internally to keep track of interesting things.
         # This is currently written-to by coinchooser to tell UI code about 'dust_to_fee', which
         # is change that's too small to go to change outputs (below dust threshold) and needed

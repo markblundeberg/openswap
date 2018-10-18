@@ -72,7 +72,8 @@ class AmountEdit(MyLineEdit):
 
 class BTCAmountEdit(AmountEdit):
 
-    def __init__(self, decimal_point, currency, is_int = False, parent=None):
+    def __init__(self,currency, decimal_point, is_int = False, parent=None):
+
         AmountEdit.__init__(self, self._base_unit, is_int, parent)
         self.decimal_point = decimal_point
         self.currency = currency

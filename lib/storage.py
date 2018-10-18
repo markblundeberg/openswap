@@ -62,7 +62,7 @@ def multisig_type(wallet_type):
 
 class WalletStorage(PrintError):
 
-    def __init__(self, path, manual_upgrades=False):
+    def __init__(self, path, currency, manual_upgrades=False):
         self.print_error("wallet path", path)
         self.manual_upgrades = manual_upgrades
         self.lock = threading.RLock()
@@ -81,6 +81,8 @@ class WalletStorage(PrintError):
         else:
             # avoid new wallets getting 'upgraded'
             self.put('seed_version', FINAL_SEED_VERSION)
+            self.put('cryptocurrencies', currency)
+
 
     def load_data(self, s):
         try:

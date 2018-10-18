@@ -221,7 +221,7 @@ class Daemon(DaemonThread):
         if path in self.wallets:
             wallet = self.wallets[path]
             return wallet
-        storage = WalletStorage(path, manual_upgrades=True)
+        storage = WalletStorage(path, self.currency, manual_upgrades=True)
         if not storage.file_exists():
             return
         if storage.is_encrypted():

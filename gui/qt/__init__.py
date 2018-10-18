@@ -42,11 +42,7 @@ import PyQt5.QtCore as QtCore
 from electroncash.i18n import _, set_language
 from electroncash.plugins import run_hook
 from electroncash import WalletStorage
-# from electroncash.synchronizer import Synchronizer
-# from electroncash.verifier import SPV
-# from electroncash.util import DebugMem
 from electroncash.util import UserCancelled, print_error
-# from electroncash.wallet import Abstract_Wallet
 
 from .installwizard import InstallWizard, GoBack
 
@@ -67,18 +63,17 @@ from .network_dialog import NetworkDialog
 class OpenFileEventFilter(QObject):
     def __init__(self, windows):
         self.windows = windows
+        self.check = False
         super(OpenFileEventFilter, self).__init__()
 
     def eventFilter(self, obj, event):
         if event.type() == QtCore.QEvent.FileOpen:
-            if len(self.windows['BTC']) >= 1 and len(self.windows['BCH']) >= 1:
-                self.windows['BTC'][0].pay_to_URI(event.url().toString())
-                self.windows['BCH'][0].pay_to_URI(event.url().toString())
-                return True
-            elif not len(self.windows['BTC']) >= 1 and len(self.windows['BCH']) >= 1:
-                self.windows['BCH'][0].pay_to_URI(event.url().toString())
-                return True
-        return False
+            currencies = ['BTC','BCH']
+            for currency in currencies :
+                if len(self.windows[currency]) >= 1:
+                    self.windows[currency][0].pay_to_URI(event.url().toString())
+                    self.check = True
+        return self.check
 
 
 class QElectrumApplication(QApplication):
@@ -104,7 +99,7 @@ class ElectrumGui:
             QGuiApplication.setDesktopFileName('electrum.desktop')
         self.config = config
         self.plugins = plugins
-        self.windows = {'BTC':list([]), 'BCH': list([])}
+        self.windows = {'BTC': list([]), 'BCH': list([])}
         self.efilter = OpenFileEventFilter(self.windows)
         self.app = QElectrumApplication(sys.argv)
         self.app.installEventFilter(self.efilter)
@@ -206,7 +201,7 @@ class ElectrumGui:
 
                 wallet = daemon.load_wallet(path, None)
                 if not wallet:
-                    storage = WalletStorage(path, manual_upgrades=True)
+                    storage = WalletStorage(path, daemon.currency, manual_upgrades=True)
                     wizard = InstallWizard(self.config, self.app, self.plugins, daemon.currency, storage)
                     try:
                         wallet = wizard.run_and_get_wallet()

@@ -2791,7 +2791,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
     def toggle_cashaddr(self, on):
         self.config.set_key('show_cashaddr', on)
         Address.show_cashaddr(on)
-        for window in self.gui_object.windows:
+        for window in self.gui_object.windows[self.currency]:
             window.cashaddr_toggled_signal.emit()
 
     def settings_dialog(self):

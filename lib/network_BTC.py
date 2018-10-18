@@ -1081,7 +1081,7 @@ class Network(util.DaemonThread):
             raise BaseException(r.get('error'))
         return r.get('result')
 
-    def broadcast(self, tx, timeout=30):
+    def broadcast_transaction(self, tx, timeout=30):
         tx_hash = tx.txid()
         try:
             out = self.synchronous_get(('blockchain.transaction.broadcast', [str(tx)]), timeout)
@@ -1104,3 +1104,34 @@ class Network(util.DaemonThread):
         msgs = [('blockchain.scripthash.subscribe', [sh])
             for sh in scripthashes]
         self.send(msgs, callback)
+
+    @staticmethod
+    def __wait_for(it):
+        """Wait for the result of calling lambda `it`."""
+        q = queue.Queue()
+        it(q.put)
+        try:
+            result = q.get(block=True, timeout=30)
+        except queue.Empty:
+            raise util.TimeoutException(_('Server did not answer'))
+
+        if result.get('error'):
+            raise Exception(result.get('error'))
+
+        return result.get('result')
+
+    @staticmethod
+    def __with_default_synchronous_callback(invocation, callback):
+        """ Use this method if you want to make the network request
+        synchronous. """
+        if not callback:
+            return Network.__wait_for(invocation)
+
+        invocation(callback)
+
+
+    def get_merkle_for_transaction(self, tx_hash, tx_height, callback=None):
+        command = 'blockchain.transaction.get_merkle'
+        invocation = lambda c: self.send([(command, [tx_hash, tx_height])], c)
+
+        return Network.__with_default_synchronous_callback(invocation, callback)

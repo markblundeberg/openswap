@@ -81,7 +81,7 @@ class WalletStorage(PrintError):
         else:
             # avoid new wallets getting 'upgraded'
             self.put('seed_version', FINAL_SEED_VERSION)
-            self.put('cryptocurrencies', currency)
+            self.put('currency', currency)
 
 
     def load_data(self, s):

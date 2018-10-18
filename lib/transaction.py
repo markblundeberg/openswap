@@ -400,8 +400,7 @@ class Transaction:
             self.serialize()
         return self.raw
 
-    def __init__(self, raw):
-
+    def __init__(self, raw, ):
         if raw is None:
             self.raw = None
         elif isinstance(raw, str):
@@ -414,6 +413,7 @@ class Transaction:
         self._outputs = None
         self.locktime = 0
         self.version = 1
+
         # Ephemeral meta-data used internally to keep track of interesting things.
         # This is currently written-to by coinchooser to tell UI code about 'dust_to_fee', which
         # is change that's too small to go to change outputs (below dust threshold) and needed
@@ -633,14 +633,13 @@ class Transaction:
         '''Hash type in hex.'''
         return 0x01 | (cls.SIGHASH_FORKID + (cls.FORKID << 8))
 
-    def serialize_preimage(self, i,):
+    def serialize_preimage(self, i, cryptocurrency):
         nVersion = int_to_hex(self.version, 4)
         nHashType = int_to_hex(self.nHashType(), 4)
         nLocktime = int_to_hex(self.locktime, 4)
         inputs = self.inputs()
         outputs = self.outputs()
         txin = inputs[i]
-        cryptocurrency=getattr(self, 'cryptocurrency', 'BCH')
         if cryptocurrency=="BCH":
             hashPrevouts = bh2u(Hash(bfh(''.join(self.serialize_outpoint(txin) for txin in inputs))))
             hashSequence = bh2u(Hash(bfh(''.join(int_to_hex(txin.get('sequence', 0xffffffff - 1), 4) for txin in inputs))))
@@ -728,7 +727,7 @@ class Transaction:
         s, r = self.signature_count()
         return r == s
 
-    def sign(self, keypairs):
+    def sign(self, keypairs, currency):
         for i, txin in enumerate(self.inputs()):
             num = txin['num_sig']
             pubkeys, x_pubkeys = self.get_sorted_pubkeys(txin)
@@ -742,7 +741,7 @@ class Transaction:
                     sec, compressed = keypairs.get(x_pubkey)
                     pubkey = public_key_from_private_key(sec, compressed)
                     # add signature
-                    pre_hash = Hash(bfh(self.serialize_preimage(i)))
+                    pre_hash = Hash(bfh(self.serialize_preimage(i, currency)))
                     pkey = regenerate_key(sec)
                     secexp = pkey.secret
                     private_key = MySigningKey.from_secret_exponent(secexp, curve = SECP256k1)

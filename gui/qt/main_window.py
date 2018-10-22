@@ -1510,6 +1510,10 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         amount = tx.output_value() if self.is_max else sum(map(lambda x:x[2], outputs))
         fee = tx.get_fee()
 
+        use_rbf = self.config.get('use_rbf', True)
+        if use_rbf and self.currency == 'BTC':
+            tx.set_rbf(True)
+
         #if fee < self.wallet.relayfee() * tx.estimated_size() / 1000 and tx.requires_fee(self.wallet):
         #self.show_error(_("This transaction requires a higher fee, or it will not be propagated by the network"))
         #return

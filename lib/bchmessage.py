@@ -542,13 +542,13 @@ class AddrMessageWatcher:
             try:
                 tx = self.wallet.transactions[tx_hash]
             except KeyError:
-                # tx in history;
+                # tx in history, but hasn't been downloaded yet.
                 continue
             try:
                 sourcekey,destaddr,data,verifycallback = parse_tx(tx)
                 self.known_pubkeys[Address.from_pubkey(sourcekey)] = sourcekey
             except ParseError:
-                # this gets thrown when it's not a message-style tx for us
+                # this gets thrown when it's not a message-style tx
                 self.messageinfo[tx_hash] = None
                 continue
             in0 = tx.inputs()[0]

@@ -114,9 +114,12 @@ class OpenSwapDialog(QDialog, MessageBoxMixin):
         def on_success(result):
             pmw.callbacks_decrypted.append(self.gotDecryptSig.emit)
             self.hw.update()
+        def on_error(einfo):
+            import traceback
+            traceback.print_exception(*einfo)
 
         d = WaitingDialog(self, _('Opening...'), pmw.start,
-                          on_success, None)
+                          on_success, on_error)
 
     def closeEvent(self, event):
         event.accept()

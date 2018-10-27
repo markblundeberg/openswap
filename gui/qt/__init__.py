@@ -16,7 +16,8 @@
 #
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 # EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+# MERCHANTABILITY, FITN
+# ESS FOR A PARTICULAR PURPOSE AND
 # NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
 # BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
 # ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
@@ -41,11 +42,7 @@ import PyQt5.QtCore as QtCore
 from electroncash.i18n import _, set_language
 from electroncash.plugins import run_hook
 from electroncash import WalletStorage
-# from electroncash.synchronizer import Synchronizer
-# from electroncash.verifier import SPV
-# from electroncash.util import DebugMem
 from electroncash.util import UserCancelled, print_error
-# from electroncash.wallet import Abstract_Wallet
 
 from .installwizard import InstallWizard, GoBack
 
@@ -66,18 +63,21 @@ from .network_dialog import NetworkDialog
 class OpenFileEventFilter(QObject):
     def __init__(self, windows):
         self.windows = windows
+        self.check = False
         super(OpenFileEventFilter, self).__init__()
 
     def eventFilter(self, obj, event):
         if event.type() == QtCore.QEvent.FileOpen:
-            if len(self.windows) >= 1:
-                self.windows[0].pay_to_URI(event.url().toString())
-                return True
-        return False
+            currencies = ['BTC','BCH']
+            for currency in currencies :
+                if len(self.windows[currency]) >= 1:
+                    self.windows[currency][0].pay_to_URI(event.url().toString())
+                    self.check = True
+        return self.check
 
 
 class QElectrumApplication(QApplication):
-    new_window_signal = pyqtSignal(str, object)
+    new_window_signal = pyqtSignal(str,object, object)
 
 
 class QNetworkUpdatedSignalObject(QObject):
@@ -86,7 +86,7 @@ class QNetworkUpdatedSignalObject(QObject):
 
 class ElectrumGui:
 
-    def __init__(self, config, daemon, plugins):
+    def __init__(self, config, plugins):
         set_language(config.get('language'))
         # Uncomment this call to verify objects are being properly
         # GC-ed when windows are closed
@@ -98,42 +98,47 @@ class ElectrumGui:
         if hasattr(QGuiApplication, 'setDesktopFileName'):
             QGuiApplication.setDesktopFileName('electrum.desktop')
         self.config = config
-        self.daemon = daemon
         self.plugins = plugins
-        self.windows = []
+        self.windows = {'BTC': list([]), 'BCH': list([])}
         self.efilter = OpenFileEventFilter(self.windows)
         self.app = QElectrumApplication(sys.argv)
         self.app.installEventFilter(self.efilter)
         self.timer = Timer()
-        self.nd = None
-        self.network_updated_signal_obj = QNetworkUpdatedSignalObject()
+        self.nd = {}
+        self.tray = {}
+        self.network_updated_signal_obj = {'BCH': QNetworkUpdatedSignalObject(), 'BTC': QNetworkUpdatedSignalObject()}
         # init tray
         self.dark_icon = self.config.get("dark_icon", False)
-        self.tray = QSystemTrayIcon(self.tray_icon(), None)
-        self.tray.setToolTip('Electrum')
-        self.tray.activated.connect(self.tray_activated)
-        self.build_tray_menu()
-        self.tray.show()
+        self.build_tray("BTC")
+        self.build_tray("BCH")
+        self.currency_daemon = {}
         self.app.new_window_signal.connect(self.start_new_window)
         run_hook('init_qt', self)
         ColorScheme.update_from_widget(QWidget())
 
-    def build_tray_menu(self):
+    def build_tray(self, currency):
+        self.tray[currency] = QSystemTrayIcon(self.tray_icon(), None)
+        self.tray[currency].setToolTip('Electrum')
+        self.tray[currency].activated.connect(self.tray_activated)
+        self.build_tray_menu(currency)
+        self.tray[currency].show()
+
+    def build_tray_menu(self, currency):
         # Avoid immediate GC of old menu when window closed via its action
-        if self.tray.contextMenu() is None:
+        if self.tray[currency].contextMenu() is None:
             m = QMenu()
-            self.tray.setContextMenu(m)
+            self.tray[currency].setContextMenu(m)
         else:
-            m = self.tray.contextMenu()
+            m = self.tray[currency].contextMenu()
             m.clear()
-        for window in self.windows:
+        for window in self.windows[currency]:
             submenu = m.addMenu(window.wallet.basename())
             submenu.addAction(_("Show/Hide"), window.show_or_hide)
             submenu.addAction(_("Close"), window.close)
         m.addAction(_("Dark/Light"), self.toggle_tray_icon)
         m.addSeparator()
         m.addAction(_("Exit Electron Cash"), self.close)
-        self.tray.setContextMenu(m)
+        self.tray[currency].setContextMenu(m)
 
     def tray_icon(self):
         if self.dark_icon:
@@ -146,57 +151,58 @@ class ElectrumGui:
         self.config.set_key("dark_icon", self.dark_icon, True)
         self.tray.setIcon(self.tray_icon())
 
-    def tray_activated(self, reason):
+    def tray_activated(self, reason, currency):
         if reason == QSystemTrayIcon.DoubleClick:
-            if all([w.is_hidden() for w in self.windows]):
-                for w in self.windows:
+            if all([w.is_hidden() for w in self.windows[currency]]):
+                for w in self.windows[currency]:
                     w.bring_to_top()
             else:
-                for w in self.windows:
+                for w in self.windows[currency]:
                     w.hide()
 
-    def close(self):
-        for window in self.windows:
+    def close(self, currency):
+        for window in self.windows[currency]:
             window.close()
 
-    def new_window(self, path, uri=None):
+    def new_window(self, path, daemon, uri=None ):
         # Use a signal as can be called from daemon thread
-        self.app.new_window_signal.emit(path, uri)
+        self.app.new_window_signal.emit(path, uri, daemon)
 
-    def show_network_dialog(self, parent):
-        if not self.daemon.network:
+    def show_network_dialog(self, parent, daemon):
+        currency = daemon.currency
+        if not daemon.network:
             parent.show_warning(_('You are using Electron Cash in offline mode; restart Electron Cash if you want to get connected'), title=_('Offline'))
             return
-        if self.nd:
-            self.nd.on_update()
-            self.nd.show()
-            self.nd.raise_()
+        if self.nd.get(currency) is not None:
+            self.nd[currency].on_update()
+            self.nd[currency].show()
+            self.nd[currency].raise_()
             return
-        self.nd = NetworkDialog(self.daemon.network, self.config,
-                                self.network_updated_signal_obj)
-        self.nd.show()
+        self.nd[currency] = NetworkDialog(daemon.network, self.config, self.network_updated_signal_obj[currency], currency)
+        self.nd[currency].show()
 
-    def create_window_for_wallet(self, wallet):
-        w = ElectrumWindow(self, wallet)
-        self.windows.append(w)
-        self.build_tray_menu()
+    def create_window_for_wallet(self, wallet, currency):
+        w = ElectrumWindow(self, wallet, currency, self.plugins)
+        self.windows[currency].append(w)
+        self.build_tray_menu(currency)
         # FIXME: Remove in favour of the load_wallet hook
         run_hook('on_new_window', w)
         return w
 
-    def start_new_window(self, path, uri):
+    def start_new_window(self, path, uri, daemon):
         '''Raises the window for the wallet if it is open.  Otherwise
         opens the wallet and creates a new window for it.'''
-        for w in self.windows:
+        for w in self.windows[daemon.currency]:
             if w.wallet.storage.path == path:
                 w.bring_to_top()
                 break
         else:
             try:
-                wallet = self.daemon.load_wallet(path, None)
+
+                wallet = daemon.load_wallet(path, None)
                 if not wallet:
-                    storage = WalletStorage(path, manual_upgrades=True)
-                    wizard = InstallWizard(self.config, self.app, self.plugins, storage)
+                    storage = WalletStorage(path, daemon.currency, manual_upgrades=True)
+                    wizard = InstallWizard(self.config, self.app, self.plugins, daemon.currency, storage)
                     try:
                         wallet = wizard.run_and_get_wallet()
                     except UserCancelled:
@@ -207,8 +213,8 @@ class ElectrumGui:
                         wizard.terminate()
                     if not wallet:
                         return
-                    wallet.start_threads(self.daemon.network)
-                    self.daemon.add_wallet(wallet)
+                    wallet.start_threads(daemon.network)
+                    daemon.add_wallet(wallet)
             except BaseException as e:
                 traceback.print_exc(file=sys.stdout)
                 if '2fa' in str(e):
@@ -218,7 +224,7 @@ class ElectrumGui:
                     d = QMessageBox(QMessageBox.Warning, _('Error'), 'Cannot load wallet:\n' + str(e))
                     d.exec_()
                 return
-            w = self.create_window_for_wallet(wallet)
+            w = self.create_window_for_wallet(wallet, daemon.currency)
         if uri:
             w.pay_to_URI(uri)
         w.bring_to_top()
@@ -226,27 +232,31 @@ class ElectrumGui:
 
         # this will activate the window
         w.activateWindow()
+
         return w
 
-    def close_window(self, window):
-        self.windows.remove(window)
-        self.build_tray_menu()
+    def close_window(self, window, daemon):
+        self.windows[daemon.currency].remove(window)
+        self.build_tray_menu(daemon.currency)
         # save wallet path of last open window
         if not self.windows:
-            self.config.save_last_wallet(window.wallet)
+            self.config.save_last_wallet(window.wallet, daemon.currency)
         run_hook('on_close_window', window)
 
-    def init_network(self):
+    def init_network(self, daemon):
         # Show network dialog if config does not exist
-        if self.daemon.network:
-            if self.config.get('auto_connect') is None:
-                wizard = InstallWizard(self.config, self.app, self.plugins, None)
-                wizard.init_network(self.daemon.network)
+        if daemon.network:
+            if self.config.get('auto_connect_'+daemon.currency) is None:
+                wizard = InstallWizard(self.config, self.app, self.plugins, daemon.currency, None)
+                wizard.init_network(daemon.network)
                 wizard.terminate()
 
-    def main(self):
+    def set_currency_daemon(self, currency, daemon):
+        self.currency_daemon[currency] = daemon
+
+    def main(self, daemon):
         try:
-            self.init_network()
+            self.init_network(daemon)
         except UserCancelled:
             return
         except GoBack:
@@ -255,9 +265,9 @@ class ElectrumGui:
             traceback.print_exc(file=sys.stdout)
             return
         self.timer.start()
-        self.config.open_last_wallet()
-        path = self.config.get_wallet_path()
-        if not self.start_new_window(path, self.config.get('url')):
+        self.config.open_last_wallet(daemon.currency)
+        path = self.config.get_wallet_path(daemon.currency)
+        if not self.start_new_window(path, self.config.get('url'), daemon):
             return
         signal.signal(signal.SIGINT, lambda *args: self.app.quit())
 
@@ -266,6 +276,7 @@ class ElectrumGui:
             # aboutToQuit is emitted (but following this, it should be emitted)
             if self.app.quitOnLastWindowClosed():
                 self.app.quit()
+
         self.app.lastWindowClosed.connect(quit_after_last_window)
 
         def clean_up():
@@ -275,6 +286,7 @@ class ElectrumGui:
             event = QtCore.QEvent(QtCore.QEvent.Clipboard)
             self.app.sendEvent(self.app.clipboard(), event)
             self.tray.hide()
+
         self.app.aboutToQuit.connect(clean_up)
 
         # main loop

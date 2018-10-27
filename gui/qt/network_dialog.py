@@ -33,7 +33,7 @@ import PyQt5.QtCore as QtCore
 from electroncash.i18n import _
 from electroncash.networks import NetworkConstants
 from electroncash.util import print_error
-from electroncash.network import serialize_server, deserialize_server
+from electroncash.network_BTC import serialize_server, deserialize_server
 
 from .util import *
 
@@ -41,9 +41,9 @@ protocol_names = ['TCP', 'SSL']
 protocol_letters = 'ts'
 
 class NetworkDialog(QDialog):
-    def __init__(self, network, config, network_updated_signal_obj):
+    def __init__(self, network, config, network_updated_signal_obj, currency):
         QDialog.__init__(self)
-        self.setWindowTitle(_('Network'))
+        self.setWindowTitle(_(currency+' Network'))
         self.setMinimumSize(500, 20)
         self.nlayout = NetworkChoiceLayout(network, config)
         self.network_updated_signal_obj = network_updated_signal_obj
@@ -105,7 +105,7 @@ class NodesListWidget(QTreeWidget):
         for k, items in chains.items():
             b = network.blockchains[k]
             name = b.get_name()
-            if n_chains >1:
+            if n_chains > 1:
                 x = QTreeWidgetItem([name + '@%d'%b.get_base_height(), '%d'%b.height()])
                 x.setData(0, Qt.UserRole, 1)
                 x.setData(1, Qt.UserRole, b.base_height)
@@ -519,3 +519,4 @@ class TorDetector(QThread):
         except socket.error:
             pass
         return False
+

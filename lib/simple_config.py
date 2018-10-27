@@ -24,7 +24,7 @@ def set_config(c):
 
 
 FINAL_CONFIG_VERSION = 2
-
+FEE_ETA_TARGETS = [25, 10, 5, 2]
 
 class SimpleConfig(PrintError):
     """
@@ -69,6 +69,7 @@ class SimpleConfig(PrintError):
         # Set self.path and read the user config
         self.user_config = {}  # for self.get in electrum_path()
         self.path = self.electrum_path()
+
         self.user_config = read_user_config_function(self.path)
         if not self.user_config:
             # avoid new config getting upgraded
@@ -199,24 +200,23 @@ class SimpleConfig(PrintError):
             f.write(s)
         os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
 
-    def get_wallet_path(self):
+    def get_wallet_path(self,currency):
         """Set the path of the wallet."""
-
         # command line -w option
         if self.get('wallet_path'):
             return os.path.join(self.get('cwd'), self.get('wallet_path'))
 
         # path in config file
-        path = self.get('default_wallet_path')
+        path = self.get('default_wallet_path_'+currency)
         if path and os.path.exists(path):
             return path
 
         # default path
         util.assert_datadir_available(self.path)
-        dirpath = os.path.join(self.path, "wallets")
+        dirpath = os.path.join(self.path, "wallets/"+currency)
         make_dir(dirpath)
 
-        new_path = os.path.join(self.path, "wallets", "default_wallet")
+        new_path = os.path.join(self.path, "wallets/"+currency, "default_wallet")
 
         # default path in pre 1.9 versions
         old_path = os.path.join(self.path, "electrum.dat")
@@ -225,11 +225,11 @@ class SimpleConfig(PrintError):
 
         return new_path
 
-    def remove_from_recently_open(self, filename):
-        recent = self.get('recently_open', [])
+    def remove_from_recently_open(self, filename, currency):
+        recent = self.get('recently_open_'+currency, [])
         if filename in recent:
             recent.remove(filename)
-            self.set_key('recently_open', recent)
+            self.set_key('recently_open_'+currency, recent)
 
     def set_session_timeout(self, seconds):
         self.print_error("session timeout -> %d seconds" % seconds)
@@ -238,16 +238,16 @@ class SimpleConfig(PrintError):
     def get_session_timeout(self):
         return self.get('session_timeout', 300)
 
-    def open_last_wallet(self):
+    def open_last_wallet(self, currency):
         if self.get('wallet_path') is None:
-            last_wallet = self.get('gui_last_wallet')
+            last_wallet = self.get('gui_last_wallet_'+currency)
             if last_wallet is not None and os.path.exists(last_wallet):
                 self.cmdline_options['default_wallet_path'] = last_wallet
 
-    def save_last_wallet(self, wallet):
+    def save_last_wallet(self, wallet,currency):
         if self.get('wallet_path') is None:
             path = wallet.storage.path
-            self.set_key('gui_last_wallet', path)
+            self.set_key('gui_last_wallet_'+currency, path)
 
     def max_fee_rate(self):
         f = self.get('max_fee_rate', MAX_FEE_RATE)

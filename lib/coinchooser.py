@@ -283,6 +283,9 @@ class CoinChooserPrivacy(CoinChooserRandom):
 
         return penalty
 
+COIN_CHOOSERS = {
+    'Privacy': CoinChooserPrivacy,
+}
 
 def get_name(config):
     kind = config.get('coin_chooser')

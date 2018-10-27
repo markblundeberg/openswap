@@ -21,13 +21,10 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import os
-import sys
 import threading
 
 
 from . import util
-from .networks import NetworkConstants
 from .bitcoin import *
 
 class VerifyError(Exception):
@@ -270,7 +267,7 @@ class Blockchain(util.PrintError):
 
     def path(self):
         d = util.get_headers_dir(self.config)
-        filename = 'blockchain_headers' if self.parent_base_height is None else os.path.join('forks', 'fork_%d_%d'%(self.parent_base_height, self.base_height))
+        filename = 'blockchain_headers_bch' if self.parent_base_height is None else os.path.join('forks', 'fork_%d_%d'%(self.parent_base_height, self.base_height))
         return os.path.join(d, filename)
 
     def save_chunk(self, base_height, chunk_data):

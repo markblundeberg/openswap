@@ -221,7 +221,6 @@ class ElectrumGui:
 
     def main_command(self):
         c = self.stdscr.getch()
-        print(c)
         cc = curses.unctrl(c).decode()
         if   c == curses.KEY_RIGHT: self.tab = (self.tab + 1)%self.num_tabs
         elif c == curses.KEY_LEFT: self.tab = (self.tab - 1)%self.num_tabs

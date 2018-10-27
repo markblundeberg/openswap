@@ -99,7 +99,7 @@ class InstallWizard(QDialog, MessageBoxMixin, BaseWizard):
     accept_signal = pyqtSignal()
     synchronized_signal = pyqtSignal(str)
 
-    def __init__(self, config, app, plugins, storage):
+    def __init__(self, config, app, plugins,currency, storage):
         BaseWizard.__init__(self, config, storage)
         QDialog.__init__(self, None)
         self.setWindowTitle('Electron Cash  -  ' + _('Install Wizard'))
@@ -107,6 +107,7 @@ class InstallWizard(QDialog, MessageBoxMixin, BaseWizard):
         self.config = config
         # Set for base base class
         self.plugins = plugins
+        self.currency = currency
         self.language_for_seed = config.get('language')
         self.setMinimumSize(600, 400)
         self.accept_signal.connect(self.accept)
@@ -186,7 +187,7 @@ class InstallWizard(QDialog, MessageBoxMixin, BaseWizard):
         def on_filename(filename):
             path = os.path.join(wallet_folder, filename)
             try:
-                self.storage = WalletStorage(path, manual_upgrades=True)
+                self.storage = WalletStorage(path,self.currency, manual_upgrades=True)
                 self.next_button.setEnabled(True)
             except IOError:
                 self.storage = None
@@ -334,7 +335,7 @@ class InstallWizard(QDialog, MessageBoxMixin, BaseWizard):
         self.app.processEvents()
 
     def remove_from_recently_open(self, filename):
-        self.config.remove_from_recently_open(filename)
+        self.config.remove_from_recently_open(filename, self.currency)
 
     def text_input(self, title, message, is_valid, allow_multi=False):
         slayout = KeysLayout(parent=self, title=message, is_valid=is_valid,
@@ -506,7 +507,7 @@ class InstallWizard(QDialog, MessageBoxMixin, BaseWizard):
         self.exec_layout(clayout.layout(), title)
         r = clayout.selected_index()
         network.auto_connect = (r == 0)
-        self.config.set_key('auto_connect', network.auto_connect, True)
+        self.config.set_key('auto_connect_'+self.currency, network.auto_connect, True)
         if r == 1:
             nlayout = NetworkChoiceLayout(network, self.config, wizard=True)
             if self.exec_layout(nlayout.layout()):

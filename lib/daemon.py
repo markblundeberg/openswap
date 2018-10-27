@@ -31,7 +31,6 @@ import jsonrpclib
 from .jsonrpc import VerifyingJSONRPCServer
 
 from .version import PACKAGE_VERSION
-from .network import Network
 from .util import json_decode, DaemonThread
 from .util import print_error, to_string
 from .wallet import Wallet
@@ -41,35 +40,35 @@ from .simple_config import SimpleConfig
 from .exchange_rate import FxThread
 
 
-def get_lockfile(config):
-    return os.path.join(config.path, 'daemon')
+def get_lockfile(config, currency):
+    return os.path.join(config.path, currency+'_daemon')
 
 
 def remove_lockfile(lockfile):
     os.unlink(lockfile)
 
 
-def get_fd_or_server(config):
+def get_fd_or_server(config, currency):
     '''Tries to create the lockfile, using O_EXCL to
     prevent races.  If it succeeds it returns the FD.
     Otherwise try and connect to the server specified in the lockfile.
     If this succeeds, the server is returned.  Otherwise remove the
     lockfile and try again.'''
-    lockfile = get_lockfile(config)
+    lockfile = get_lockfile(config, currency)
     while True:
         try:
             return os.open(lockfile, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644), None
         except OSError:
             pass
-        server = get_server(config)
+        server = get_server(config,currency)
         if server is not None:
             return None, server
         # Couldn't connect; remove lockfile and try again.
         remove_lockfile(lockfile)
 
 
-def get_server(config):
-    lockfile = get_lockfile(config)
+def get_server(config, currency):
+    lockfile = get_lockfile(config,currency)
     while True:
         create_time = None
         try:
@@ -82,6 +81,7 @@ def get_server(config):
                 else:
                     server_url = 'http://%s:%s@%s:%d' % (
                         rpc_user, rpc_password, host, port)
+
                 server = jsonrpclib.Server(server_url)
             # Test daemon is running
             server.ping()
@@ -116,9 +116,15 @@ def get_rpc_credentials(config):
 
 class Daemon(DaemonThread):
 
-    def __init__(self, config, fd, is_gui):
+    def __init__(self, config, fd, currency, is_gui):
         DaemonThread.__init__(self)
         self.config = config
+        self.currency = currency
+
+        if currency == 'BTC':
+            from .network_BTC import Network
+        else:
+            from .network_BCH import Network
         if config.get('offline'):
             self.network = None
         else:
@@ -129,10 +135,11 @@ class Daemon(DaemonThread):
             self.network.add_jobs([self.fx])
         self.gui = None
         self.wallets = {}
+
         # Setup JSONRPC server
         self.init_server(config, fd, is_gui)
 
-    def init_server(self, config, fd, is_gui):
+    def init_server(self, config, fd,  is_gui):
         host = config.get('rpchost', '127.0.0.1')
         port = config.get('rpcport', 0)
 
@@ -169,12 +176,11 @@ class Daemon(DaemonThread):
         if sub in [None, 'start']:
             response = "Daemon already running"
         elif sub == 'load_wallet':
-            path = config.get_wallet_path()
-            wallet = self.load_wallet(path, config.get('password'))
-            self.cmd_runner.wallet = wallet
+            self.start_network(self.wallet)
+            self.cmd_runner.wallet = self.wallet
             response = True
         elif sub == 'close_wallet':
-            path = config.get_wallet_path()
+            path = config.get_wallet_path(self.currency)
             if path in self.wallets:
                 self.stop_wallet(path)
                 response = True
@@ -190,7 +196,7 @@ class Daemon(DaemonThread):
                     'server_height': self.network.get_server_height(),
                     'spv_nodes': len(self.network.get_interfaces()),
                     'connected': self.network.is_connected(),
-                    'auto_connect': p[4],
+                    'auto_connect_'+self.currency: p[4],
                     'version': PACKAGE_VERSION,
                     'wallets': {k: w.is_up_to_date()
                                 for k, w in self.wallets.items()},
@@ -204,14 +210,7 @@ class Daemon(DaemonThread):
         return response
 
     def run_gui(self, config_options):
-        config = SimpleConfig(config_options)
         if self.gui:
-            #if hasattr(self.gui, 'new_window'):
-            #    path = config.get_wallet_path()
-            #    self.gui.new_window(path, config.get('url'))
-            #    response = "ok"
-            #else:
-            #    response = "error: current GUI does not support multiple windows"
             response = "error: Electron Cash GUI already running"
         else:
             response = "Error: Electron Cash is running in daemon mode. Please stop the daemon first."
@@ -222,7 +221,7 @@ class Daemon(DaemonThread):
         if path in self.wallets:
             wallet = self.wallets[path]
             return wallet
-        storage = WalletStorage(path, manual_upgrades=True)
+        storage = WalletStorage(path, self.currency, manual_upgrades=True)
         if not storage.file_exists():
             return
         if storage.is_encrypted():
@@ -239,6 +238,7 @@ class Daemon(DaemonThread):
         wallet.start_threads(self.network)
         self.wallets[path] = wallet
         return wallet
+
 
     def add_wallet(self, wallet):
         path = wallet.storage.path
@@ -292,14 +292,14 @@ class Daemon(DaemonThread):
         self.on_stop()
 
     def stop(self):
-        self.print_error("stopping, removing lockfile")
-        remove_lockfile(get_lockfile(self.config))
+        remove_lockfile(get_lockfile(self.config, self.currency))
         DaemonThread.stop(self)
 
-    def init_gui(self, config, plugins):
-        gui_name = config.get('gui', 'qt')
+    def init_gui(self, plugins):
+        gui_name = self.config.get('gui', 'qt')
         if gui_name in ['lite', 'classic']:
             gui_name = 'qt'
         gui = __import__('electroncash_gui.' + gui_name, fromlist=['electroncash_gui'])
-        self.gui = gui.ElectrumGui(config, self, plugins)
-        self.gui.main()
+        self.gui = gui.ElectrumGui(self.config, plugins)
+        self.gui.set_currency_daemon(self.currency, self)
+        self.gui.main(self)

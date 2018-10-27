@@ -72,19 +72,27 @@ class AmountEdit(MyLineEdit):
 
 class BTCAmountEdit(AmountEdit):
 
-    def __init__(self, decimal_point, is_int = False, parent=None):
+    def __init__(self,currency, decimal_point, is_int = False, parent=None):
+
         AmountEdit.__init__(self, self._base_unit, is_int, parent)
         self.decimal_point = decimal_point
+        self.currency = currency
 
     def _base_unit(self):
         p = self.decimal_point()
-        assert p in [2, 5, 8]
-        if p == 8:
-            return 'BCH'
-        if p == 5:
-            return 'mBCH'
+        assert p in [0, 2, 5, 8]
+        if p == 0 and self.currency == 'BTC':
+            return 'sat'
         if p == 2:
-            return 'cash'
+            if self.currency == 'BTC':
+                return 'bits'
+            elif self.currency == 'BCH':
+                return 'cash'
+        if p == 5:
+            return 'm'+self.currency
+        if p == 8:
+            return self.currency
+
         raise Exception('Unknown base unit')
 
     def get_amount(self):
@@ -101,21 +109,26 @@ class BTCAmountEdit(AmountEdit):
         else:
             self.setText(format_satoshis_plain(amount, self.decimal_point()))
 
+
 class BTCkBEdit(BTCAmountEdit):
     def _base_unit(self):
         return BTCAmountEdit._base_unit(self) + '/kB'
 
+
 class BTCSatsByteEdit(BTCAmountEdit):
-    def __init__(self, parent=None):
-        BTCAmountEdit.__init__(self, decimal_point = lambda: 2, is_int = False, parent = parent)
+    def __init__(self,currency, parent=None):
+        BTCAmountEdit.__init__(self,currency, decimal_point = lambda: 2, is_int = False, parent = parent)
+
     def _base_unit(self):
         return 'sats' + '/B'
+
     def get_amount(self):
         try:
             x = float(Decimal(str(self.text())))
         except:
             return None
-        return x if x > 0.0 else None    
+        return x if x > 0.0 else None
+
     def setAmount(self, amount):
         if amount is None:
             self.setText(" ") # Space forces repaint in case units changed

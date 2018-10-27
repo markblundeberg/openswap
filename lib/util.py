@@ -380,16 +380,17 @@ def bh2u(x):
 
 def user_dir(prefer_local=False):
     if 'ANDROID_DATA' in os.environ:
+        raise NotImplementedError('We do not support android yet')
         return android_check_data_dir()
     elif os.name == 'posix' and "HOME" in os.environ:
-        return os.path.join(os.environ["HOME"], ".electron-cash" )
+        return os.path.join(os.environ["HOME"], ".openswap" )
     elif "APPDATA" in os.environ or "LOCALAPPDATA" in os.environ:
         app_dir = os.environ.get("APPDATA")
         localapp_dir = os.environ.get("LOCALAPPDATA")
         # Prefer APPDATA, but may get LOCALAPPDATA if present and req'd.
         if localapp_dir is not None and prefer_local or app_dir is None:
             app_dir = localapp_dir
-        return os.path.join(app_dir, "ElectronCash")
+        return os.path.join(app_dir, "OpenSwap")
     else:
         #raise Exception("No home directory found in environment variables.")
         return
@@ -400,7 +401,8 @@ def make_dir(path):
     if not os.path.exists(path):
         if os.path.islink(path):
             raise BaseException('Dangling link: ' + path)
-        os.mkdir(path)
+        os.makedirs(path)
+        #os.mkdir(path)
         os.chmod(path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
 
 

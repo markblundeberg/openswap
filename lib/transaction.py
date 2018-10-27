@@ -413,7 +413,7 @@ class Transaction:
         self._outputs = None
         self.locktime = 0
         self.version = 1
-        
+
         # Ephemeral meta-data used internally to keep track of interesting things.
         # This is currently written-to by coinchooser to tell UI code about 'dust_to_fee', which
         # is change that's too small to go to change outputs (below dust threshold) and needed
@@ -447,7 +447,7 @@ class Transaction:
             txin['x_pubkeys'] = x_pubkeys = list(x_pubkeys)
         return pubkeys, x_pubkeys
 
-    def update_signatures(self, raw):
+    def update_signatures(self, raw, cryptocurrency):
         """Add new signatures to a transaction"""
         d = deserialize(raw)
         for i, txin in enumerate(self.inputs()):
@@ -457,7 +457,7 @@ class Transaction:
             for sig in sigs2:
                 if sig in sigs1:
                     continue
-                pre_hash = Hash(bfh(self.serialize_preimage(i)))
+                pre_hash = Hash(bfh(self.serialize_preimage(i, cryptocurrency)))
                 # der to string
                 order = ecdsa.ecdsa.generator_secp256k1.order()
                 r, s = ecdsa.util.sigdecode_der(bfh(sig[:-2]), order)
@@ -604,15 +604,22 @@ class Transaction:
     @classmethod
     def serialize_input(self, txin, script, estimate_size=False):
         # Prev hash and index
+        s = self.serialize_btc_input(txin, script)
+        if ('value' in txin   # Legacy txs
+                and not (estimate_size or self.is_txin_complete(txin))):
+            s += int_to_hex(txin['value'], 8)
+
+        return s
+
+    @classmethod
+    def serialize_btc_input(self, txin, script):
+        # Prev hash and index
         s = self.serialize_outpoint(txin)
         # Script length, script, sequence
         s += var_int(len(script)//2)
         s += script
         s += int_to_hex(txin.get('sequence', 0xffffffff - 1), 4)
-        # offline signing needs to know the input value
-        if ('value' in txin   # Legacy txs
-            and not (estimate_size or self.is_txin_complete(txin))):
-            s += int_to_hex(txin['value'], 8)
+
         return s
 
     def BIP_LI01_sort(self):
@@ -633,15 +640,14 @@ class Transaction:
         '''Hash type in hex.'''
         return 0x01 | (cls.SIGHASH_FORKID + (cls.FORKID << 8))
 
-    def serialize_preimage(self, i,):
+    def serialize_preimage(self, i, cryptocurrency):
         nVersion = int_to_hex(self.version, 4)
-        nHashType = int_to_hex(self.nHashType(), 4)
         nLocktime = int_to_hex(self.locktime, 4)
         inputs = self.inputs()
         outputs = self.outputs()
         txin = inputs[i]
-        cryptocurrency=getattr(self, 'cryptocurrency', 'BCH')
         if cryptocurrency=="BCH":
+            nHashType = int_to_hex(self.nHashType(), 4)
             hashPrevouts = bh2u(Hash(bfh(''.join(self.serialize_outpoint(txin) for txin in inputs))))
             hashSequence = bh2u(Hash(bfh(''.join(int_to_hex(txin.get('sequence', 0xffffffff - 1), 4) for txin in inputs))))
             hashOutputs = bh2u(Hash(bfh(''.join(self.serialize_output(o) for o in outputs))))
@@ -656,7 +662,8 @@ class Transaction:
             preimage = nVersion + hashPrevouts + hashSequence + outpoint + scriptCode + amount + nSequence + hashOutputs + nLocktime + nHashType
         elif cryptocurrency=="BTC":
             # EXPECTS NON SEGWIT
-            txins = var_int(len(inputs)) + ''.join(self.serialize_input(txin, self.get_preimage_script(txin) if i==k else '') for k, txin in enumerate(inputs))
+            nHashType = int_to_hex(1, 4)
+            txins = var_int(len(inputs)) + ''.join(self.serialize_btc_input(txin, self.get_preimage_script(txin) if i==k else '') for k, txin in enumerate(inputs))
             txouts = var_int(len(outputs)) + ''.join(self.serialize_output(o) for o in outputs)
             preimage = nVersion + txins + txouts + nLocktime + nHashType
         else:
@@ -672,6 +679,11 @@ class Transaction:
         txouts = var_int(len(outputs)) + ''.join(self.serialize_output(o) for o in outputs)
         self.raw = nVersion + txins + txouts + nLocktime
         return self.raw
+
+    def set_rbf(self, rbf):
+        nSequence = 0xffffffff - (2 if rbf else 1)
+        for txin in self.inputs():
+            txin['sequence'] = nSequence
 
     def hash(self):
         print("warning: deprecated tx.hash()")
@@ -728,7 +740,7 @@ class Transaction:
         s, r = self.signature_count()
         return r == s
 
-    def sign(self, keypairs):
+    def sign(self, keypairs, currency):
         for i, txin in enumerate(self.inputs()):
             num = txin['num_sig']
             pubkeys, x_pubkeys = self.get_sorted_pubkeys(txin)
@@ -742,14 +754,14 @@ class Transaction:
                     sec, compressed = keypairs.get(x_pubkey)
                     pubkey = public_key_from_private_key(sec, compressed)
                     # add signature
-                    pre_hash = Hash(bfh(self.serialize_preimage(i)))
+                    pre_hash = Hash(bfh(self.serialize_preimage(i, currency)))
                     pkey = regenerate_key(sec)
                     secexp = pkey.secret
                     private_key = MySigningKey.from_secret_exponent(secexp, curve = SECP256k1)
                     public_key = private_key.get_verifying_key()
                     sig = private_key.sign_digest_deterministic(pre_hash, hashfunc=hashlib.sha256, sigencode = ecdsa.util.sigencode_der)
-                    assert public_key.verify_digest(sig, pre_hash, sigdecode = ecdsa.util.sigdecode_der)
-                    txin['signatures'][j] = bh2u(sig) + int_to_hex(self.nHashType() & 255, 1)
+                    assert public_key.verify_digest(sig, pre_hash, sigdecode=ecdsa.util.sigdecode_der)
+                    txin['signatures'][j] = bh2u(sig) + ('01' if currency == 'BTC' else int_to_hex(self.nHashType() & 255, 1))
                     txin['x_pubkeys'][j] = pubkey
                     txin['pubkeys'][j] = pubkey # needed for fd keys
                     self._inputs[i] = txin

@@ -19,8 +19,10 @@ from .address import OpCodes, Address, Script, hash160
 from .transaction import Transaction, TYPE_ADDRESS
 from .util import format_satoshis_plain_nofloat
 
-from ecdsa.ecdsa import generator_secp256k1
-from .bchmessage import point_to_ser
+from .bchmessage import point_to_ser, secp_order, privkey_to_serpub
+
+from .wallet import ImportedAddressWallet
+from .storage import WalletStorage
 
 # Below this number, nLockTime and OP_CHECKLOCKTIMEVERIFY input are defined
 # using the block number. Othewise using epoch timestamp.
@@ -28,13 +30,16 @@ LOCKTIME_THRESHOLD = 500000000
 # (In bitcoind, found in script/script.h)
 # Note that BIP113 changed how nLockTime interacts with block time. Beware!
 
+cryptos = [(b'BCH', 'BCH', 3000),
+           (b'BTC', 'BTC', 3000)
+           ]
+
+crypto_list_by_bytes = [c[0] for c in cryptos]
+crypto_list_by_str = [c[1] for c in cryptos]
+
 def joinbytes(iterable):
     """Joins an iterable of bytes and/or integers into a single byte string"""
     return b''.join((bytes((x,)) if isinstance(x,int) else x) for x in iterable)
-
-def privkey_to_serpub(privkey, compressed):
-    """Convert private key integer to serialized public key"""
-    return point_to_ser(privkey * generator_secp256k1, True)
 
 class SwapContract:
     """Atomic swapping contract for bitcoin script.
@@ -221,9 +226,6 @@ class SwapContract:
                     0x4c, len(self.redeemscript), self.redeemscript,
                     ]
             txin['scriptSig'] = joinbytes(script).hex()
-
-from .wallet import ImportedAddressWallet
-from .storage import WalletStorage
 
 class HalfSwapController:
     """
@@ -548,7 +550,7 @@ class OfferInfo(namedtuple('cls', 'salt want_rtime give_rtime want_amount want_t
         self = cls(salt, want_rtime, give_rtime, want_amount, want_ticker, give_amount, give_ticker)
         return self, n
 
-def privkey_from_seed(seed, order = generator_secp256k1.order()):
+def privkey_from_seed(seed, order = secp_order):
     """Create a private key deterministically from seed bytes. Returns an
     integer in range of 1 ... order-1, uniformly distributed to within 1/2^256.
     """
@@ -782,4 +784,3 @@ class OpenSwapMessage:
             ba.append(packet.typebyte)
             ba.extend(packet.to_bytes())
         return bytes(ba)
-

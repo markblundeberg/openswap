@@ -47,6 +47,10 @@ from . import bitcoin
 from . import transaction
 from .util import NotEnoughFunds
 
+from .wallet import ImportedAddressWallet, Abstract_Wallet
+from .storage import WalletStorage
+
+
 class ParseError(Exception):
     pass
 
@@ -61,6 +65,8 @@ class AuthenticationError(Exception):
 import ecdsa
 from ecdsa import SECP256k1
 from ecdsa.ellipticcurve import Point, INFINITY
+from ecdsa.ecdsa import generator_secp256k1
+secp_order = generator_secp256k1.order()
 
 def point_to_ser(P, compressed):
     """ Convert Point to serialized format """
@@ -83,7 +89,7 @@ def ser_to_point(Aser, allow_infinity=False):
     """
     #WEAKNESS (kinda) -- generally don't care since input is public
     p     = SECP256k1.curve.p()
-    order = SECP256k1.order
+    order = secp_order
     if Aser == b'\x00':
         # point at infinity
         assert allow_infinity
@@ -122,16 +128,20 @@ def ser_to_point(Aser, allow_infinity=False):
 
     return Point(SECP256k1.curve, x, y, order)
 
+def privkey_to_serpub(privkey, compressed):
+    """Convert private key integer to serialized public key"""
+    return point_to_ser(privkey * generator_secp256k1, compressed)
+
 # Make sure the point constructor refuses bad points.
 try:
     # example of bad uncompressed point
-    Point(SECP256k1.curve, 1, 1, SECP256k1.order)
+    Point(SECP256k1.curve, 1, 1, secp_order)
     raise RuntimeError("insecure! ecdsa is not refusing off-curve points!")
 except AssertionError:
     pass
 try:
     # example of bad compressed point
-    Point(SECP256k1.curve, 5, 0x350ae3b48047adacdeea49fb8a0b289a94f726801078408aba79631fa7a1b6ba, SECP256k1.order)
+    Point(SECP256k1.curve, 5, 0x350ae3b48047adacdeea49fb8a0b289a94f726801078408aba79631fa7a1b6ba, secp_order)
     raise RuntimeError("insecure! ecdsa is not refusing off-curve points!")
 except AssertionError:
     pass
@@ -215,7 +225,7 @@ def parse_tx(tx):
     inputs have correct info on them (use wallet.add_input_info()) otherwise
     the signature checking will fail.
     """
-    if len(tx.outputs()) < 2 or len(tx.inputs()) < 1:
+    if len(tx.outputs()) < 1 or len(tx.inputs()) < 1:
         raise ParseError('too few inputs/outputs')
 
     # Extract data
@@ -227,8 +237,6 @@ def parse_tx(tx):
         data = ops[1][1]
     except:
         raise ParseError('cannot read op_return data from first output')
-
-    destinationaddr = tx.outputs()[1][1]
 
     # We rely on the way that transaction.py parse_scriptSig() works to detect
     # P2PKH. Since the scriptCode includes the P2PKH script, this will get
@@ -254,6 +262,13 @@ def parse_tx(tx):
         pubkey_point = ser_to_point(pubkey)
     except:
         raise ParseError('bad pubkey')
+
+    if len(tx.outputs()) > 1:
+        destinationaddr = tx.outputs()[1][1]
+    else:
+        # only output of op_return -- means that this was message-to-self
+        # which had no change
+        destinationaddr = Address.from_pubkey(pubkey)
 
     def verify_sig_callback():
         try:
@@ -323,30 +338,30 @@ class Channel:
         self.redeemscript = bytes((len(self.chanid), )) + self.chanid
         self.address = Address.from_multisig_script(self.redeemscript)
 
-    def auth_encrypt(self, source_pubkey, message):
+    def auth_encrypt(self, message, source_pubkey):
         """Authenticated encrypt; adds 32 bytes (IV, MAC).
 
         The source_pubkey is included in the MAC to prevent replay.
         """
         iv_ciphertext = aes_encrypt(self.chankey, message)
-        h = hmac.new(self.chankey, b'BCHMessage.ChanMsg:', 'sha256')
+        h = hmac.new(self.chankey, b'BCHMessage.ChanMAC:', 'sha256')
         h.update(source_pubkey)
         h.update(iv_ciphertext)
         mac = h.digest()[:16]
         return iv_ciphertext + mac
 
-    def auth_decrypt(self, source_pubkey, message):
+    def auth_decrypt(self, data, source_pubkey):
         """Authenticated decrypt; removes 32 bytes (IV, MAC).
 
         If the MAC is not valid, this raises AuthenticationError.
         (indicates message encrypted with another key, or, just malicious/corrupted data)
         """
-        if len(message) < 32:
+        if len(data) < 32:
             raise ValueError("too short")
-        iv_ciphertext = message[:-16]
-        mac1 = message[-16:]
+        iv_ciphertext = data[:-16]
+        mac1 = data[-16:]
 
-        h = hmac.new(self.chankey, b'BCHMessage.ChanMsg:', 'sha256')
+        h = hmac.new(self.chankey, b'BCHMessage.ChanMAC:', 'sha256')
         h.update(source_pubkey)
         h.update(iv_ciphertext)
         mac2 = h.digest()[:16]
@@ -371,7 +386,7 @@ class Channel:
         h.update(namebytes)
         digest = h.digest()
         chankey = digest[32:]
-        self = cls.__init__(chankey)
+        self = cls(chankey)
         self.name = name
         return self
 
@@ -401,9 +416,9 @@ class MessagingKey:
         assert self.address == address
         return self
 
-    def create_private_message(self, wallet, dest_pubkey, message, config, fee=None):
+    def create_message(self, wallet, dest_address, data, config, fee=None):
         """
-        Creates a transaction that holds a message addressed to dest_pubkey.
+        Create and sign a transaction that holds a message addressed to dest_address.
 
         Max message length to fit in 223 byte op_return relay limit: 204 bytes
 
@@ -411,12 +426,7 @@ class MessagingKey:
         """
         assert wallet.txin_type == 'p2pkh'
 
-        key = ecdh(self.privkey, dest_pubkey)
-        iv_ciphertext = aes_encrypt(key, message)
-
-        dest_address = Address.from_pubkey(dest_pubkey)
-
-        askedoutputs = [ (transaction.TYPE_SCRIPT, ScriptOutput(make_opreturn(iv_ciphertext)), 0),
+        askedoutputs = [ (transaction.TYPE_SCRIPT, ScriptOutput(make_opreturn(data)), 0),
                          (transaction.TYPE_ADDRESS, dest_address, 546),
                          ]
         if dest_address == self.address:
@@ -450,6 +460,19 @@ class MessagingKey:
 
         return tx
 
+    def encrypt_private_message(self, message, other_pubkey):
+        """
+        Attempts to reads a private message from opreturn data. You need
+        to provide the pubkey of the counterparty.
+
+        (see `parse_tx` for the reverse of create_private_message, but
+        it doesn't give you the pubkey of the recipient)
+
+        Returns message (16 bytes less than data)
+        """
+        key = ecdh(self.privkey, other_pubkey)
+        return aes_encrypt(key, message)
+
     def read_private_message(self, data, other_pubkey):
         """
         Attempts to reads a private message from opreturn data. You need
@@ -468,26 +491,48 @@ class AddrMessageWatcher:
     Watches for updates on wallet transactions for a specific address.
     Extracts out the appropriate BCHMessage transactions and then passes
     them off to a decoder (if subclassed).
+
+    If you provide a Network object for wallet_or_network, then a single-
+    address in-memory-only wallet is created.
     """
-    def __init__(self, wallet, address, pubkey, min_data_length):
-        self.wallet = wallet
+    def __init__(self, wallet_or_network, address):
         self.address = address
-        self.pubkey = pubkey # can be None
-        self.min_data_length = min_data_length
         self.known_pubkeys = {}  # address -> bytes
         self.messageinfo = {} # txhash -> dict
         self.processing_hashes = set()
+
+        if isinstance(wallet_or_network, Abstract_Wallet):
+            wallet = wallet_or_network
+            self._my_wallet_network = None
+        else:
+            network = wallet_or_network
+            self._my_wallet_network = network
+            # create an in-memory storage that is never saved anywhere
+            wstorage = WalletStorage(None)  # path = None
+            wallet = ImportedAddressWallet(wstorage)
+            wallet.import_address(self.address)
+            self._my_wallet = True
+
+        assert wallet.is_mine(address)
+        self.wallet = wallet
 
     def add_pubkey(self,pubkey):
         self.known_pubkeys[Address.from_pubkey(pubkey)] = pubkey
 
     def start(self,):
+        if self._my_wallet_network:
+            self.wallet.start_threads(self._my_wallet_network)
         self.network = self.wallet.network
         self.network.register_callback(self.on_network, ['updated'])
         self.update_messages()
 
     def stop(self,):
         self.network.unregister_callback(self.on_network)
+        if self._my_wallet_network:
+            self.wallet.stop_threads()
+
+    def exclude(self, info):
+        return False
 
     def update_messages(self,):
         # first iteration - find new txes
@@ -502,10 +547,6 @@ class AddrMessageWatcher:
             try:
                 sourcekey,destaddr,data,verifycallback = parse_tx(tx)
                 self.known_pubkeys[Address.from_pubkey(sourcekey)] = sourcekey
-                if len(data) < self.min_data_length:
-                    raise ParseError
-                if sourcekey != self.pubkey and destaddr != self.address:
-                    raise ParseError
             except ParseError:
                 # this gets thrown when it's not a message-style tx for us
                 self.messageinfo[tx_hash] = None
@@ -520,6 +561,9 @@ class AddrMessageWatcher:
                         proctime = 0,
                         proctries = 0,
                         )
+            if self.exclude(info):
+                self.messageinfo[tx_hash] = None
+                continue
             self.messageinfo[tx_hash] = info
             self.processing_hashes.add(tx_hash)
 
@@ -590,12 +634,23 @@ class AddrMessageWatcher:
 
 
 class PrivMessageWatcher(AddrMessageWatcher):
-    def __init__(self, wallet, key):
-        super().__init__(wallet, key.address, key.pubkey, 16)
+    def __init__(self, wallet_or_network, key):
+        super().__init__(wallet_or_network, key.address)
         self.key = key
+        self.pubkey = key.pubkey
         self.missing_pubkeys = {}
         self.mplock = threading.Lock()
         self.callbacks_decrypted = []
+
+    def exclude(self, info):
+        if len(info['data']) < 16:
+            return True
+        dst = info['dst']
+        if not isinstance(dst, Address) or dst.kind != Address.ADDR_P2PKH:
+            return True
+        if info['src'] != self.pubkey and dst != self.address:
+            return True
+        return False
 
     def on_verified(self, tx_hash):
         # this is called once the input signature has been verified.
@@ -607,6 +662,7 @@ class PrivMessageWatcher(AddrMessageWatcher):
             return
         s = info['src']
         d = info['dst']
+
         if d == self.key.address:
             # to me
             other_pubkey = s
@@ -637,3 +693,34 @@ class PrivMessageWatcher(AddrMessageWatcher):
                 continue
             for txhash in txhashes:
                 self.try_decrypt_tx(txhash)
+
+
+class ChanMessageWatcher(AddrMessageWatcher):
+    def __init__(self, wallet_or_network, channel):
+        super().__init__(wallet_or_network, channel.address)
+        self.channel = channel
+        self.callbacks_decrypted = []
+
+    def exclude(self, info):
+        if len(info['data']) < 32:
+            return True
+        return (info['dst'] != self.address)
+
+    def on_verified(self, tx_hash):
+        # this is called once the input signature has been verified.
+        self.try_decrypt_tx(tx_hash)
+
+    def try_decrypt_tx(self, tx_hash):
+        info = self.messageinfo[tx_hash]
+        if not info:
+            return
+        s = info['src']
+        assert info['dst'] == self.address
+
+        try:
+            info['message'] = self.channel.auth_decrypt(info['data'], s)
+        except AuthenticationError:
+            pass
+
+        for cb in list(self.callbacks_decrypted):
+            cb(tx_hash)

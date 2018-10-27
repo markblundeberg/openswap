@@ -29,6 +29,7 @@ from electroncash.util import print_error
 from .transaction_dialog import show_transaction
 
 from .openswap_offerinfo import OfferInfoDialog
+from .openswap_public import prompt_dialog
 
 dialogs = []  # Otherwise python randomly garbage collects the dialogs...
 
@@ -53,7 +54,7 @@ TX_ICONS = [
 class OpenSwapDialog(QDialog, MessageBoxMixin):
     gotDecryptSig = pyqtSignal(str)
 
-    def __init__(self, parent, pmw):
+    def __init__(self, main_window, pmw):
         # top level window
         QDialog.__init__(self, parent=None)
         self.pmw = pmw
@@ -61,11 +62,12 @@ class OpenSwapDialog(QDialog, MessageBoxMixin):
         self.address = self.key.address
         pubkey = self.key.pubkey.hex()
 
-        self.parent = parent
-        self.config = parent.config
-        self.wallet = parent.wallet
-        self.network = parent.network
-        self.app = parent.app
+        self.wallet = pmw.wallet
+        self.network = pmw.wallet.network
+
+        self.main_window = main_window
+        self.config = main_window.config
+        self.app = main_window.app
 
         self.setWindowTitle(_("OpenSwap Private Messages"))
 
@@ -93,6 +95,10 @@ class OpenSwapDialog(QDialog, MessageBoxMixin):
 
         b = QPushButton(_("Offer"))
         b.clicked.connect(lambda: self.make_offer())
+        hbox.addWidget(b)
+
+        b = QPushButton(_("View Public Offers"))
+        b.clicked.connect(lambda: prompt_dialog(self.main_window, 0, 1, pmw=self.pmw))
         hbox.addWidget(b)
 
         hbox.addStretch(1)
@@ -188,7 +194,9 @@ class OpenSwapDialog(QDialog, MessageBoxMixin):
                 print_error("Transaction broadcast result:", response)  # --verbose only
 
         try:
-            tx = self.key.create_private_message(self.wallet, dest_pubkey, messagebytes, self.config)
+            dest_addr = Address.from_pubkey(dest_pubkey)
+            data = self.key.encrypt_private_message(messagebytes, dest_pubkey)
+            tx = self.key.create_message(self.wallet, dest_addr, data, self.config)
             self.network.broadcast_transaction(tx.serialize(), callback=callback)
             return True
         except bchmessage.NotEnoughFunds:
@@ -198,7 +206,6 @@ class OpenSwapDialog(QDialog, MessageBoxMixin):
         return False
 
     def make_offer(self, other_pubkey=None, offer=None):
-        now = int(time.time())
         if not other_pubkey:
             d = QInputDialog(parent=self)
             d.setWindowModality(Qt.WindowModal) # don't freeze all windows
@@ -210,6 +217,7 @@ class OpenSwapDialog(QDialog, MessageBoxMixin):
             other_pubkey = bytes.fromhex(d.textValue())
 
         if not offer:
+            now = int(time.time())
             offer = openswap.OfferInfo(
                     salt = token_bytes(8),
                     want_rtime = now + 10*3600,
@@ -286,8 +294,8 @@ class MyHistoryList(MyTreeWidget):
 
     def __init__(self, parent):
         MyTreeWidget.__init__(self, parent, self.create_menu,
-                              ['', _('From'), _('To'), _('Type'), _('Data') ],
-                              4, [])
+                              ['', _('Date'), _('From'), _('To'), _('Type'), _('Data') ],
+                              5, [])
         self.setSortingEnabled(True)
         self.sortByColumn(0, Qt.AscendingOrder)
 
@@ -320,6 +328,7 @@ class MyHistoryList(MyTreeWidget):
                 to_str = 'unk'
             item = SortableTreeWidgetItem([
                 '',
+                status_str,
                 'me' if from_me else from_pubkey[-3:].hex(),
                 to_str,
                 typ,
@@ -334,16 +343,14 @@ class MyHistoryList(MyTreeWidget):
             item.setToolTip(0, str(conf) + " confirmation" + ("s" if conf != 1 else ""))
 
             item.setData(0, Qt.UserRole, (tx_hash, i))
-            item.setData(1, Qt.UserRole, from_pubkey)
-            item.setData(2, Qt.UserRole, to_pubkey)
-            item.setToolTip(4, '<p>%s</p>'%(escape(datastr),))
+            item.setData(2, Qt.UserRole, from_pubkey)
+            item.setData(3, Qt.UserRole, to_pubkey)
+            item.setToolTip(5, '<p>%s</p>'%(escape(datastr),))
             self.insertTopLevelItem(0, item)
             if current_tx == tx_hash and current_i == i:
                 self.setCurrentItem(item)
             return item
 
-
-        messages = []
         for tx_hash, height in wallet.get_address_history(myaddress):
             info = pmw.messageinfo.get(tx_hash)
             if not info:
@@ -374,7 +381,7 @@ class MyHistoryList(MyTreeWidget):
 
             try:
                 osm = openswap.OpenSwapMessage.from_bytes(messagebytes)
-            except:
+            except Exception as e:
                 try:
                     message = repr(messagebytes.decode('utf8'))
                 except:
@@ -393,7 +400,7 @@ class MyHistoryList(MyTreeWidget):
                     print(e)
                     datastr = str(pak)
                 item = putitem(i, 'OS', datastr)
-                item.setData(4, Qt.UserRole, pak)
+                item.setData(5, Qt.UserRole, pak)
 
     def on_doubleclick(self, item, column):
         if self.permit_edit(item, column):
@@ -401,7 +408,7 @@ class MyHistoryList(MyTreeWidget):
         else:
             tx_hash, i = item.data(0, Qt.UserRole)
             tx = self.wallet.transactions.get(tx_hash)
-            self.parent.parent.show_transaction(tx)
+            self.parent.main_window.show_transaction(tx)
 
     def create_menu(self, position):
         self.selectedIndexes()
@@ -423,8 +430,8 @@ class MyHistoryList(MyTreeWidget):
         key = self.parent.key
         mypubkey  = key.pubkey
 
-        from_pubkey = item.data(1, Qt.UserRole)
-        to_pubkey = item.data(2, Qt.UserRole)
+        from_pubkey = item.data(2, Qt.UserRole)
+        to_pubkey = item.data(3, Qt.UserRole)
         from_me = (from_pubkey == mypubkey)
         to_me   = (to_pubkey == mypubkey)
 
@@ -432,7 +439,7 @@ class MyHistoryList(MyTreeWidget):
             other_pubkey = to_pubkey
         else:
             other_pubkey = from_pubkey
-        packet = item.data(4, Qt.UserRole)
+        packet = item.data(5, Qt.UserRole)
 
         menu = QMenu()
 
@@ -460,11 +467,11 @@ class MyHistoryList(MyTreeWidget):
         elif to_pubkey:
             menu.addAction(_("Write another message"), lambda: self.parent.write_message(to_pubkey.hex()))
 
-        menu.addAction(_("Copy {}").format(column_title), lambda: self.parent.parent.app.clipboard().setText(column_data))
+        menu.addAction(_("Copy {}").format(column_title), lambda: self.parent.main_window.app.clipboard().setText(column_data))
 
         def showtx():
             tx = self.wallet.transactions.get(tx_hash)
-            self.parent.parent.show_transaction(tx)
+            self.parent.main_window.show_transaction(tx)
         menu.addAction(_("View Tx"), showtx)
 
         menu.exec_(self.viewport().mapToGlobal(position))

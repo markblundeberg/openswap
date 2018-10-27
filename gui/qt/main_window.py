@@ -68,6 +68,8 @@ from .fee_slider import FeeSlider
 
 from .util import *
 
+from . import openswap_public, openswap_private
+
 class StatusBarButton(QPushButton):
     def __init__(self, icon, tooltip, func):
         QPushButton.__init__(self, icon, '')
@@ -2268,6 +2270,15 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
     @protected
     def open_openswap(self, address, password):
         from .openswap_private import show_dialog
+        from electroncash import bchmessage
+
+        key = bchmessage.MessagingKey.from_wallet(self.wallet, address, password)
+        pmw = bchmessage.PrivMessageWatcher(self.wallet, key)
+        d = show_dialog(self, pmw)
+
+    @protected
+    def open_bchmessage_public(self, address, password):
+        from .bchmessage_public import show_dialog
         from electroncash import bchmessage
 
         key = bchmessage.MessagingKey.from_wallet(self.wallet, address, password)

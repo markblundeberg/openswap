@@ -167,7 +167,7 @@ class Abstract_Wallet(PrintError):
         self.synchronizer = None
         self.verifier = None
 
-        self.cryptocurrency        = self.storage.get('cryptocurrency', 'BCH')
+        self.cryptocurrency        = self.storage.get('currency')
 
         self.gap_limit_for_change = 6 # constant
         # saved fields
@@ -253,6 +253,7 @@ class Abstract_Wallet(PrintError):
         self.transactions = {}
         for tx_hash, raw in tx_list.items():
             tx = Transaction(raw)
+            tx.cryptocurrency = self.cryptocurrency
             self.transactions[tx_hash] = tx
             if self.txi.get(tx_hash) is None and self.txo.get(tx_hash) is None and (tx_hash not in self.pruned_txo.values()):
                 self.print_error("removing unreferenced tx", tx_hash)
@@ -709,6 +710,7 @@ class Abstract_Wallet(PrintError):
         return self._history.get(address, [])
 
     def add_transaction(self, tx_hash, tx):
+        tx.cryptocurrency = self.cryptocurrency
         is_coinbase = tx.inputs()[0]['type'] == 'coinbase'
         with self.transaction_lock:
             # add inputs
@@ -1234,7 +1236,7 @@ class Abstract_Wallet(PrintError):
         for k in self.get_keystores():
             try:
                 if k.can_sign(tx):
-                    k.sign_transaction(tx, password, self.storage.get("currency"))
+                    k.sign_transaction(tx, password)
             except UserCancelled:
                 continue
 

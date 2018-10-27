@@ -447,7 +447,7 @@ class Transaction:
             txin['x_pubkeys'] = x_pubkeys = list(x_pubkeys)
         return pubkeys, x_pubkeys
 
-    def update_signatures(self, raw, cryptocurrency):
+    def update_signatures(self, raw):
         """Add new signatures to a transaction"""
         d = deserialize(raw)
         for i, txin in enumerate(self.inputs()):
@@ -457,7 +457,7 @@ class Transaction:
             for sig in sigs2:
                 if sig in sigs1:
                     continue
-                pre_hash = Hash(bfh(self.serialize_preimage(i, cryptocurrency)))
+                pre_hash = Hash(bfh(self.serialize_preimage(i)))
                 # der to string
                 order = ecdsa.ecdsa.generator_secp256k1.order()
                 r, s = ecdsa.util.sigdecode_der(bfh(sig[:-2]), order)
@@ -635,18 +635,22 @@ class Transaction:
         s += script
         return s
 
-    @classmethod
-    def nHashType(cls):
+    def nHashType(self):
         '''Hash type in hex.'''
-        return 0x01 | (cls.SIGHASH_FORKID + (cls.FORKID << 8))
+        if self.cryptocurrency == 'BCH':
+            return 0x01 | (self.SIGHASH_FORKID + (self.FORKID << 8))
+        elif self.cryptocurrency == 'BTC':
+            return 0x01
+        else:
+            raise ValueError('unknown cryptocurrency', self.cryptocurrency)
 
-    def serialize_preimage(self, i, cryptocurrency):
+    def serialize_preimage(self, i):
         nVersion = int_to_hex(self.version, 4)
         nLocktime = int_to_hex(self.locktime, 4)
         inputs = self.inputs()
         outputs = self.outputs()
         txin = inputs[i]
-        if cryptocurrency=="BCH":
+        if self.cryptocurrency=="BCH":
             nHashType = int_to_hex(self.nHashType(), 4)
             hashPrevouts = bh2u(Hash(bfh(''.join(self.serialize_outpoint(txin) for txin in inputs))))
             hashSequence = bh2u(Hash(bfh(''.join(int_to_hex(txin.get('sequence', 0xffffffff - 1), 4) for txin in inputs))))
@@ -660,14 +664,14 @@ class Transaction:
                 raise InputValueMissing
             nSequence = int_to_hex(txin.get('sequence', 0xffffffff - 1), 4)
             preimage = nVersion + hashPrevouts + hashSequence + outpoint + scriptCode + amount + nSequence + hashOutputs + nLocktime + nHashType
-        elif cryptocurrency=="BTC":
+        elif self.cryptocurrency=="BTC":
             # EXPECTS NON SEGWIT
-            nHashType = int_to_hex(1, 4)
+            nHashType = int_to_hex(self.nHashType(), 4)
             txins = var_int(len(inputs)) + ''.join(self.serialize_btc_input(txin, self.get_preimage_script(txin) if i==k else '') for k, txin in enumerate(inputs))
             txouts = var_int(len(outputs)) + ''.join(self.serialize_output(o) for o in outputs)
             preimage = nVersion + txins + txouts + nLocktime + nHashType
         else:
-            raise RuntimeError('unknown cryptocurrency', cryptocurrency)
+            raise ValueError('unknown cryptocurrency', self.cryptocurrency)
         return preimage
 
     def serialize(self, estimate_size=False):
@@ -740,7 +744,7 @@ class Transaction:
         s, r = self.signature_count()
         return r == s
 
-    def sign(self, keypairs, currency):
+    def sign(self, keypairs):
         for i, txin in enumerate(self.inputs()):
             num = txin['num_sig']
             pubkeys, x_pubkeys = self.get_sorted_pubkeys(txin)
@@ -754,14 +758,14 @@ class Transaction:
                     sec, compressed = keypairs.get(x_pubkey)
                     pubkey = public_key_from_private_key(sec, compressed)
                     # add signature
-                    pre_hash = Hash(bfh(self.serialize_preimage(i, currency)))
+                    pre_hash = Hash(bfh(self.serialize_preimage(i)))
                     pkey = regenerate_key(sec)
                     secexp = pkey.secret
                     private_key = MySigningKey.from_secret_exponent(secexp, curve = SECP256k1)
                     public_key = private_key.get_verifying_key()
                     sig = private_key.sign_digest_deterministic(pre_hash, hashfunc=hashlib.sha256, sigencode = ecdsa.util.sigencode_der)
                     assert public_key.verify_digest(sig, pre_hash, sigdecode=ecdsa.util.sigdecode_der)
-                    txin['signatures'][j] = bh2u(sig) + ('01' if currency == 'BTC' else int_to_hex(self.nHashType() & 255, 1))
+                    txin['signatures'][j] = bh2u(sig) + int_to_hex(self.nHashType() & 255, 1)
                     txin['x_pubkeys'][j] = pubkey
                     txin['pubkeys'][j] = pubkey # needed for fd keys
                     self._inputs[i] = txin

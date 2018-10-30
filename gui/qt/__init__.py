@@ -97,48 +97,56 @@ class ElectrumGui:
             QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_ShareOpenGLContexts)
         if hasattr(QGuiApplication, 'setDesktopFileName'):
             QGuiApplication.setDesktopFileName('electrum.desktop')
+        self.currencies = ['BCH', 'BTC']
         self.config = config
         self.plugins = plugins
-        self.windows = {'BTC': list([]), 'BCH': list([])}
+        self.windows = {}
+        self.network_updated_signal_obj = {}
+        for currency in self.currencies:
+            self.windows[currency] = list([])
+            self.network_updated_signal_obj[currency] = QNetworkUpdatedSignalObject()
         self.efilter = OpenFileEventFilter(self.windows)
         self.app = QElectrumApplication(sys.argv)
         self.app.installEventFilter(self.efilter)
         self.timer = Timer()
         self.nd = {}
-        self.tray = {}
-        self.network_updated_signal_obj = {'BCH': QNetworkUpdatedSignalObject(), 'BTC': QNetworkUpdatedSignalObject()}
+
+        self.tray = None
+
         # init tray
         self.dark_icon = self.config.get("dark_icon", False)
-        self.build_tray("BTC")
-        self.build_tray("BCH")
+        self.build_tray()
         self.currency_daemon = {}
         self.app.new_window_signal.connect(self.start_new_window)
         run_hook('init_qt', self)
         ColorScheme.update_from_widget(QWidget())
 
-    def build_tray(self, currency):
-        self.tray[currency] = QSystemTrayIcon(self.tray_icon(), None)
-        self.tray[currency].setToolTip('Electrum')
-        self.tray[currency].activated.connect(self.tray_activated)
-        self.build_tray_menu(currency)
-        self.tray[currency].show()
+    def build_tray(self):
+        self.tray = QSystemTrayIcon(self.tray_icon(), None)
+        self.tray.setToolTip('Openswap')
+        self.tray.activated.connect(self.tray_activated)
+        self.build_tray_menu()
+        self.tray.show()
 
-    def build_tray_menu(self, currency):
+    def build_tray_menu(self):
         # Avoid immediate GC of old menu when window closed via its action
-        if self.tray[currency].contextMenu() is None:
+        if self.tray.contextMenu() is None:
             m = QMenu()
-            self.tray[currency].setContextMenu(m)
+            self.tray.setContextMenu(m)
         else:
-            m = self.tray[currency].contextMenu()
+            m = self.tray.contextMenu()
             m.clear()
-        for window in self.windows[currency]:
-            submenu = m.addMenu(window.wallet.basename())
-            submenu.addAction(_("Show/Hide"), window.show_or_hide)
-            submenu.addAction(_("Close"), window.close)
+
+        for currency in self.currencies:
+            submenu = m.addMenu(currency)
+            for window in self.windows[currency]:
+                subsubmenu = submenu.addMenu(window.wallet.basename())
+                subsubmenu.addAction(_("Show/Hide"), window.show_or_hide)
+                subsubmenu.addAction(_("Close"), window.close)
         m.addAction(_("Dark/Light"), self.toggle_tray_icon)
         m.addSeparator()
-        m.addAction(_("Exit Electron Cash"), self.close)
-        self.tray[currency].setContextMenu(m)
+        m.addAction(_("Exit Openswap"), self.close)
+        self.tray.setContextMenu(m)
 
     def tray_icon(self):
         if self.dark_icon:
@@ -151,18 +159,20 @@ class ElectrumGui:
         self.config.set_key("dark_icon", self.dark_icon, True)
         self.tray.setIcon(self.tray_icon())
 
-    def tray_activated(self, reason, currency):
-        if reason == QSystemTrayIcon.DoubleClick:
-            if all([w.is_hidden() for w in self.windows[currency]]):
-                for w in self.windows[currency]:
-                    w.bring_to_top()
-            else:
-                for w in self.windows[currency]:
-                    w.hide()
+    def tray_activated(self, reason):
+        for currency in self.currencies:
+            if reason == QSystemTrayIcon.DoubleClick:
+                if all([w.is_hidden() for w in self.windows[currency]]):
+                    for w in self.windows[currency]:
+                        w.bring_to_top()
+                else:
+                    for w in self.windows[currency]:
+                        w.hide()
 
-    def close(self, currency):
-        for window in self.windows[currency]:
-            window.close()
+    def close(self):
+        for currency in self.currencies:
+            for window in self.windows[currency]:
+                window.close()
 
     def new_window(self, path, daemon, uri=None ):
         # Use a signal as can be called from daemon thread
@@ -184,7 +194,7 @@ class ElectrumGui:
     def create_window_for_wallet(self, wallet, currency):
         w = ElectrumWindow(self, wallet, currency, self.plugins)
         self.windows[currency].append(w)
-        self.build_tray_menu(currency)
+        self.build_tray_menu()
         # FIXME: Remove in favour of the load_wallet hook
         run_hook('on_new_window', w)
         return w
@@ -237,7 +247,7 @@ class ElectrumGui:
 
     def close_window(self, window, daemon):
         self.windows[daemon.currency].remove(window)
-        self.build_tray_menu(daemon.currency)
+        self.build_tray_menu()
         # save wallet path of last open window
         if not self.windows:
             self.config.save_last_wallet(window.wallet, daemon.currency)

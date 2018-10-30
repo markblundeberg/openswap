@@ -120,7 +120,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         self.fx = self.daemon.fx
         self.invoices = wallet.invoices
         self.contacts = wallet.contacts
-        self.tray = gui_object.tray[currency]
+        self.tray = gui_object.tray
         self.app = gui_object.app
         self.cleaned_up = False
         self.is_max = False
@@ -812,7 +812,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
             text = _("Not connected")
             icon = QIcon(":icons/status_disconnected.png")
 
-        self.tray.setToolTip("%s (%s)" % (text, self.wallet.basename()))
+        self.tray.setToolTip("%s %s (%s)" % (self.currency, text, self.wallet.basename()))
         self.balance_label.setText(text)
         self.status_button.setIcon(icon)
 
@@ -2667,9 +2667,8 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
             path = self.config.get_wallet_path(d.currency)
             if not self.gui_object.start_new_window(path, self.config.get('url'), d):
                 return
-
-        #else:
-        #    result = server.gui(self.config)
+        else:
+            result = server.gui(self.config)
 
     def bch_wallet(self):
         print("bch is default wallet")

@@ -364,7 +364,7 @@ class HalfSwapController:
         d2 = rtime - mtp_next
         return max(600, d2+600)
 
-    def mktx(self, coins, address, privkey, secret, estimate_fee):
+    def mktx(self, coins, address, privkey, secret, estimate_fee, sequence=0):
         """Make and sign a refund/redeem to given address
 
         If secret is None, it's refund mode. Otherwise it's redeem mode.
@@ -376,7 +376,9 @@ class HalfSwapController:
         inputs = []
         for c, (h, v) in coins.items():
             ph, pn = c.split(':')
-            inputs.append(self.contract.makeinput(ph, int(pn), v, mode))
+            inp = self.contract.makeinput(ph, int(pn), v, mode)
+            inp['sequence'] = sequence
+            inputs.append(inp)
             invalue += v
 
         if secret:

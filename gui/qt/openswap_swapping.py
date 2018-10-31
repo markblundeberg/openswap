@@ -338,8 +338,7 @@ class SwapDialog(QDialog, MessageBoxMixin):
             d = QInputDialog(parent=self)
             d.setLabelText(t)
             d.setWindowModality(Qt.WindowModal)
-            d.exec_()
-            if not d.result():
+            if not d.exec_():
                 return  # user cancelled
             try:
                 addr = Address.from_string(d.textValue())
@@ -347,7 +346,58 @@ class SwapDialog(QDialog, MessageBoxMixin):
             except Exception as e:
                 self.show_error(_("Invalid address: ") + str(e))
 
-        tx = sc.mktx(coins, addr, privkey, secret, self.config.estimate_fee)
+        if sc.network.currency == "BTC":
+            d = QDialog(parent=self)
+            d.setWindowTitle(_("BTC fee selection"))
+            d.setWindowModality(Qt.WindowModal)
+            vbox = QVBoxLayout()
+            d.setLayout(vbox)
+            l = QLabel(_("You are about to make a transaction on the highly-congested BTC network.")
+                       +
+                       _("It is important to choose a high fee to ensure prompt confirmation of your refund/redeem.")
+                       +
+                       _("Atomic swaps are only secure under the assumption that transactions are confirmed.")
+                       +
+                       _("To use replace-by-fee, enter an increased sequence number.")
+                       )
+            l.setWordWrap(True)
+            vbox.addWidget(l)
+
+            grid = QGridLayout()
+            vbox.addLayout(grid)
+            grid.addWidget(QLabel(_("Feerate (sat/byte)")), 0, 0)
+            fee_amount_e = QLineEdit("1.0")
+            grid.addWidget(fee_amount_e, 0, 1)
+            grid.addWidget(QLabel(_("Sequence number (for RBF)")), 1, 0)
+            sequence_num_e = QLineEdit("0")
+            grid.addWidget(sequence_num_e, 1, 1)
+
+            hbox = QHBoxLayout()
+            vbox.addLayout(hbox)
+            b = QPushButton(_("Cancel"))
+            b.clicked.connect(d.reject)
+            hbox.addWidget(b)
+            b = QPushButton(_("OK"))
+            b.clicked.connect(d.accept)
+            hbox.addWidget(b)
+
+            if not d.exec_():
+                return
+
+            try:
+                feerate = float(fee_amount_e.text())
+                sequence = int(sequence_num_e.text())
+            except Exception as e:
+                self.show_error(str(e))
+                return
+
+        else:
+            feerate = 1
+            sequence = 0xfffffffe
+
+        estimate_fee = lambda x:round(feerate * x)
+
+        tx = sc.mktx(coins, addr, privkey, secret, estimate_fee, sequence=sequence)
 
         def callback(response):
             err = response.get('error')

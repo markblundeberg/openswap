@@ -94,6 +94,8 @@ class SwapDialog(QDialog, MessageBoxMixin):
         self.instruction_label.setTextFormat(Qt.RichText)
         vbox.addWidget(self.instruction_label)
 
+        currency1 = swapper.network1.currency
+        currency2 = swapper.network2.currency
 
         ##
         # Split parts below
@@ -108,7 +110,7 @@ class SwapDialog(QDialog, MessageBoxMixin):
         hbox.addLayout(vboxright)
 
 
-        vboxleft.addWidget(QLabel(_("NET1 Swap contract address") + ':'))
+        vboxleft.addWidget(QLabel(_("%s-net swap contract address")%(currency1,) + ':'))
         addr_e = QLineEdit(str(self.swapper.contract1.address))
         addr_e.setReadOnly(True)
         vboxleft.addWidget(addr_e)
@@ -133,7 +135,7 @@ class SwapDialog(QDialog, MessageBoxMixin):
             hbox.addWidget(self.redeem_button)
 
 
-        vboxright.addWidget(QLabel(_("NET2 Swap contract address") + ':'))
+        vboxright.addWidget(QLabel(_("%s-net swap contract address")%(currency2,) + ':'))
         addr_e = QLineEdit(str(self.swapper.contract2.address))
         addr_e.setReadOnly(True)
         vboxright.addWidget(addr_e)

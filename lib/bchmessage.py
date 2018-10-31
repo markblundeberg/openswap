@@ -508,7 +508,7 @@ class AddrMessageWatcher:
             network = wallet_or_network
             self._my_wallet_network = network
             # create an in-memory storage that is never saved anywhere
-            wstorage = WalletStorage(None)  # path = None
+            wstorage = WalletStorage(None, network.currency)  # path = None
             wallet = ImportedAddressWallet(wstorage)
             wallet.import_address(self.address)
             self._my_wallet = True

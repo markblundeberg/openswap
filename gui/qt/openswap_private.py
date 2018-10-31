@@ -28,7 +28,7 @@ from electroncash.util import print_error
 
 from .transaction_dialog import show_transaction
 
-from .openswap_offerinfo import OfferInfoDialog
+from .openswap_offerinfo import OfferInfoDialog, crypto_list_by_bytes, crypto_list_by_str
 from .openswap_public import prompt_dialog
 
 dialogs = []  # Otherwise python randomly garbage collects the dialogs...
@@ -282,8 +282,24 @@ class OpenSwapDialog(QDialog, MessageBoxMixin):
             self.make_offer(other_pubkey, offer)
 
     def start_swap(self, accept_from_me, other_pubkey, offer_packet, accept_packet):
-        network1 = self.network # should be based on offer_info.want_ticker
-        network2 = self.network # should be based on offer_info.give_ticker
+        cd = self.main_window.gui_object.currency_daemon
+        oinfo = accept_packet.offer_info
+
+        ci = crypto_list_by_bytes.index(oinfo.want_ticker)
+        currency = crypto_list_by_str[ci]
+        daemon = cd.get(currency)
+        if not daemon:
+            self.show_error(_("Currently not connected to %s network. Please open a wallet on this network before continuing.")%(currency,))
+            return
+        network1 = daemon.network
+
+        ci = crypto_list_by_bytes.index(oinfo.give_ticker)
+        currency = crypto_list_by_str[ci]
+        daemon = cd.get(currency)
+        if not daemon:
+            self.show_error(_("Currently not connected to %s network. Please open a wallet on this network before continuing.")%(currency,))
+            return
+        network2 = daemon.network
 
         swapper = openswap.AtomicSwap.from_packets(self.key.privkey, other_pubkey,
                                                    offer_packet, accept_packet, accept_from_me,

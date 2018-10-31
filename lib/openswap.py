@@ -241,10 +241,11 @@ class HalfSwapController:
     def __init__(self, contract, network):
         self.contract = contract
         self.network = network
+        self.currency = network.currency
         self.address = contract.address
 
         # create an in-memory storage that is never saved anywhere
-        wstorage = WalletStorage(None)  # path = None
+        wstorage = WalletStorage(None, self.currency)  # path = None
 
         wallet = ImportedAddressWallet(wstorage)
         wallet.import_address(self.contract.address)
@@ -343,7 +344,7 @@ class HalfSwapController:
             raise RuntimeError('blockchain too short')
 
         # get last 11 times
-        times = [blockchain.read_header(h, None)['timestamp']
+        times = [blockchain.read_header(h)['timestamp']
                  for h in range(curheight - 10, curheight + 1)
                  ]
         if len(times) != 11:
@@ -390,6 +391,7 @@ class HalfSwapController:
 
         outputs = [(TYPE_ADDRESS, address, invalue - fee)]
         tx = Transaction.from_io(inputs,outputs,locktime)
+        tx.cryptocurrency = self.currency
         pubkey = privkey_to_serpub(privkey, True)
         keypairs = {pubkey.hex() : (privkey.to_bytes(32,'big'), True)}
         tx.sign(keypairs)

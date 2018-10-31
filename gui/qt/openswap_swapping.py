@@ -356,7 +356,7 @@ class SwapDialog(QDialog, MessageBoxMixin):
                     print_stderr("Transaction broadcast error:", err)
             else:
                 print_error("Transaction broadcast result:", response)  # --verbose only
-        sc.network.broadcast_transaction(tx.serialize(), callback=callback)
+        sc.network.broadcast_transaction(tx)
 
 class SwapUTXOList(MyTreeWidget):
 #    filter_columns = [0, 2]  # Address, Label

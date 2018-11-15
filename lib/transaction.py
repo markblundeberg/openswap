@@ -26,9 +26,11 @@
 
 
 # Note: The deserialization code originally comes from ABE.
-
+import traceback
+import sys
 from .util import print_error, profiler
-
+from typing import (Sequence, Union, NamedTuple, Tuple, Optional, Iterable,
+                    Callable, List, Dict)
 from .bitcoin import *
 from .address import (PublicKey, Address, Script, ScriptOutput, hash160,
                       UnknownAddress, OpCodes as opcodes)
@@ -40,7 +42,35 @@ import struct
 from .keystore import xpubkey_to_address, xpubkey_to_pubkey
 
 NO_SIGNATURE = 'ff'
+PARTIAL_TXN_HEADER_MAGIC = b'EPTF\xff'
 
+class UnknownTxinType(Exception):
+    pass
+
+
+class NotRecognizedRedeemScript(Exception):
+    pass
+
+
+class MalformedBitcoinScript(Exception):
+    pass
+
+class OPPushDataGeneric:
+    def __init__(self, pushlen: Callable=None):
+        if pushlen is not None:
+            self.check_data_len = pushlen
+
+    @classmethod
+    def check_data_len(cls, datalen: int) -> bool:
+        # Opcodes below OP_PUSHDATA4 all just push data onto stack, and are equivalent.
+        return opcodes.OP_PUSHDATA4 >= datalen >= 0
+
+    @classmethod
+    def is_instance(cls, item):
+        # accept objects that are instances of this class
+        # or other classes that are subclasses
+        return isinstance(item, cls) \
+               or (isinstance(item, type) and issubclass(item, cls))
 
 class SerializationError(Exception):
     """ Thrown when there's a problem deserializing or serializing """
@@ -93,6 +123,11 @@ class BCDataStream(object):
             raise SerializationError("attempt to read past end of buffer")
 
         return ''
+
+    def can_read_more(self) -> bool:
+        if not self.input:
+            return False
+        return self.read_cursor < len(self.input)
 
     def read_boolean(self): return self.read_bytes(1)[0] != chr(0)
     def read_int16(self): return self._read_num('<h')
@@ -359,24 +394,134 @@ def parse_output(vds, i):
     return d
 
 
-def deserialize(raw):
-    vds = BCDataStream()
-    vds.write(bfh(raw))
+def deserialize(raw , force_full_parse=False):
+    raw_bytes = bfh(raw)
     d = {}
+    if raw_bytes[:5] == PARTIAL_TXN_HEADER_MAGIC:
+        d['partial'] = is_partial = True
+        partial_format_version = raw_bytes[5]
+        if partial_format_version != 0:
+            raise SerializationError('unknown tx partial serialization format version: {}'
+                                     .format(partial_format_version))
+        raw_bytes = raw_bytes[6:]
+    else:
+        d['partial'] = is_partial = False
+    full_parse = force_full_parse or is_partial
+    vds = BCDataStream()
+    vds.write(raw_bytes)
     start = vds.read_cursor
     d['version'] = vds.read_int32()
     n_vin = vds.read_compact_size()
-    assert n_vin != 0
+    is_segwit = (n_vin == 0)
+    if is_segwit:
+        marker = vds.read_bytes(1)
+        if marker != b'\x01':
+            raise ValueError('invalid txn marker byte: {}'.format(marker))
+        n_vin = vds.read_compact_size()
+    d['segwit_ser'] = is_segwit
     d['inputs'] = [parse_input(vds) for i in range(n_vin)]
     n_vout = vds.read_compact_size()
     d['outputs'] = [parse_output(vds, i) for i in range(n_vout)]
+    if is_segwit:
+        for i in range(n_vin):
+            txin = d['inputs'][i]
+            parse_witness(vds, txin, full_parse=full_parse)
     d['lockTime'] = vds.read_uint32()
+    if vds.can_read_more():
+        raise SerializationError('extra junk at the end')
+    #    d['inputs'] = [parse_input(vds) for i in range(n_vin)]
+    #    n_vout = vds.read_compact_size()
+    #    d['outputs'] = [parse_output(vds, i) for i in range(n_vout)]
+    #    d['lockTime'] = vds.read_uint32()
     return d
 
+def construct_witness(items: Sequence[Union[str, int, bytes]]) -> str:
+    """Constructs a witness from the given stack items."""
+    witness = var_int(len(items))
+    for item in items:
+        if type(item) is int:
+            item = script_num_to_hex(item)
+        elif type(item) is bytes:
+            item = bh2u(item)
+        witness += witness_push(item)
+    return witness
 
 # pay & redeem scripts
+def parse_witness(vds, txin, full_parse: bool):
+    n = vds.read_compact_size()
+    if n == 0:
+        txin['witness'] = '00'
+        return
+    if n == 0xffffffff:
+        txin['value'] = vds.read_uint64()
+        txin['witness_version'] = vds.read_uint16()
+        n = vds.read_compact_size()
+    # now 'n' is the number of items in the witness
+    w = list(bh2u(vds.read_bytes(vds.read_compact_size())) for i in range(n))
+    txin['witness'] = construct_witness(w)
+    if not full_parse:
+        return
 
+    try:
+        if txin.get('witness_version', 0) != 0:
+            raise UnknownTxinType()
+        if txin['type'] == 'coinbase':
+            pass
+        elif txin['type'] == 'address':
+            pass
+        elif txin['type'] == 'p2wsh-p2sh' or n > 2:
+            witness_script_unsanitized = w[-1]  # for partial multisig txn, this has x_pubkeys
+            try:
+                m, n, x_pubkeys, pubkeys, witness_script = parse_redeemScript_multisig(bfh(witness_script_unsanitized))
+            except NotRecognizedRedeemScript:
+                raise UnknownTxinType()
+            txin['signatures'] = parse_sig(w[1:-1])
+            txin['num_sig'] = m
+            txin['x_pubkeys'] = x_pubkeys
+            txin['pubkeys'] = pubkeys
+            txin['witness_script'] = witness_script
+            if not txin.get('scriptSig'):  # native segwit script
+                txin['type'] = 'p2wsh'
+                txin['address'] = script_to_p2wsh(witness_script)
+        elif txin['type'] == 'p2wpkh-p2sh' or n == 2:
+            txin['num_sig'] = 1
+            txin['x_pubkeys'] = [w[1]]
+            txin['pubkeys'] = [safe_parse_pubkey(w[1])]
+            txin['signatures'] = parse_sig([w[0]])
+            if not txin.get('scriptSig'):  # native segwit script
+                txin['type'] = 'p2wpkh'
+                txin['address'] = public_key_to_p2wpkh(bfh(txin['pubkeys'][0]))
+        else:
+            raise UnknownTxinType()
+    except UnknownTxinType:
+        txin['type'] = 'unknown'
+    except BaseException:
+        txin['type'] = 'unknown'
+        traceback.print_exc(file=sys.stderr)
+        print_error('failed to parse witness', txin.get('witness'))
 
+def parse_redeemScript_multisig(redeem_script: bytes):
+    try:
+        dec2 = [ x for x in script_GetOp(redeem_script) ]
+    except MalformedBitcoinScript:
+        raise NotRecognizedRedeemScript()
+    try:
+        m = dec2[0][0] - opcodes.OP_1 + 1
+        n = dec2[-2][0] - opcodes.OP_1 + 1
+    except IndexError:
+        raise NotRecognizedRedeemScript()
+    op_m = opcodes.OP_1 + m - 1
+    op_n = opcodes.OP_1 + n - 1
+    match_multisig = [op_m] + [OPPushDataGeneric] * n + [op_n, opcodes.OP_CHECKMULTISIG]
+    if not match_decoded(dec2, match_multisig):
+        raise NotRecognizedRedeemScript()
+    x_pubkeys = [bh2u(x[1]) for x in dec2[1:-2]]
+    pubkeys = [safe_parse_pubkey(x) for x in x_pubkeys]
+    redeem_script2 = bfh(multisig_script(x_pubkeys, m))
+    if redeem_script2 != redeem_script:
+        raise NotRecognizedRedeemScript()
+    redeem_script_sanitized = multisig_script(pubkeys, m)
+    return m, n, x_pubkeys, pubkeys, redeem_script_sanitized
 
 def multisig_script(public_keys, m):
     n = len(public_keys)

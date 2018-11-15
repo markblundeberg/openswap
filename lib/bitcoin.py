@@ -28,6 +28,8 @@ import base64
 import hmac
 import os
 import json
+from . import constants
+from . import segwit_addr
 
 import ecdsa
 import pyaes
@@ -880,3 +882,43 @@ def bip32_private_key(sequence, k, chain):
     for i in sequence:
         k, chain = CKD_priv(k, chain, i)
     return k
+
+def script_num_to_hex(i: int) -> str:
+    """See CScriptNum in Bitcoin Core.
+    Encodes an integer as hex, to be used in script.
+
+    ported from https://github.com/bitcoin/bitcoin/blob/8cbc5c4be4be22aca228074f087a374a7ec38be8/src/script/script.h#L326
+    """
+    if i == 0:
+        return ''
+
+    result = bytearray()
+    neg = i < 0
+    absvalue = abs(i)
+    while absvalue > 0:
+        result.append(absvalue & 0xff)
+        absvalue >>= 8
+
+    if result[-1] & 0x80:
+        result.append(0x80 if neg else 0x00)
+    elif neg:
+        result[-1] |= 0x80
+
+    return bh2u(result)
+
+def witness_push(item: str) -> str:
+    """Returns data in the form it should be present in the witness.
+    hex -> hex
+    """
+    return var_int(len(item) // 2) + item
+
+def hash_to_segwit_addr(h, witver, *, net=None):
+    if net is None:
+        net = constants.net
+    return segwit_addr.encode(net.SEGWIT_HRP, witver, h)
+
+def public_key_to_p2wpkh(public_key):
+    return hash_to_segwit_addr(hash_160(public_key), witver=0)
+
+def script_to_p2wsh(script):
+    return hash_to_segwit_addr(sha256(bfh(script)), witver=0)

@@ -191,7 +191,7 @@ class Daemon(DaemonThread):
                 p = self.network.get_parameters()
                 response = {
                     'path': self.network.config.path,
-                    'server': p[0],
+                    'server_'+self.currency: p[0],
                     'blockchain_height': self.network.get_local_height(),
                     'server_height': self.network.get_server_height(),
                     'spv_nodes': len(self.network.get_interfaces()),

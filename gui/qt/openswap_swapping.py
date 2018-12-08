@@ -1,4 +1,6 @@
-
+"""
+Dialog to handle the actual process of making swap.
+"""
 from electroncash.i18n import _
 from electroncash.address import Address, ScriptOutput
 from electroncash.transaction import Transaction,TYPE_ADDRESS

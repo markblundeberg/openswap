@@ -136,7 +136,7 @@ class OpenSwapDialog(QDialog, MessageBoxMixin):
         return [self.address]
 
     def write_message(self, to_pubkey=''):
-        d = WindowModalDialog(self, _('Write New BCHMessage'))
+        d = WindowModalDialog(self, _('Write Raw BCHMessage'))
         d.setMinimumSize(700, 290)
 
         layout = QGridLayout(d)

@@ -1,3 +1,6 @@
+"""
+Dialog for displaying / editing an offer during private negotiation
+"""
 from functools import partial
 
 import math
@@ -25,33 +28,37 @@ class OfferInfoDialog(QDialog):
     price_sigfigs = 6  # how many significant figures to use in price calculations
 
     # Dialog for creating / editing / viewing OpenSwap offers
-    def __init__(self, parent, offerinfo, mode="create"):
+    def __init__(self, parent, offerinfo, other_pubkey, mode="create"):
         QDialog.__init__(self, parent=parent)
 
         if mode == "create":
+            self.from_me = True
             self.editable = True
             cancel_text = _("Cancel")
             edit_text = None
             ok_text = _("Send")
-            title = _("Create Offer")
-        elif mode == "view":
-            self.editable = False
-            cancel_text = _("Close")
-            edit_text = None
-            ok_text = None
-            title = _("Offer info")
+            title = _("Offer (new)")
+        #elif mode == "view":
+            #self.from_me =
+            #self.editable = False
+            #cancel_text = _("Close")
+            #edit_text = None
+            #ok_text = None
+            #title = _("Offer info")
         elif mode == "view_as_sender":
+            self.from_me = True
             self.editable = False
             cancel_text = _("Close")
             edit_text = _("Re-offer")
             ok_text = None
-            title = _("Offer sent")
+            title = _("Offer (sent)")
         elif mode == "view_as_recipient":
+            self.from_me = False
             self.editable = False
             cancel_text = _("Cancel")
             edit_text = _("Counter-offer")
             ok_text = _("Accept")
-            title = _("Offer received")
+            title = _("Offer (received)")
         else:
             raise ValueError(mode)
 
@@ -59,6 +66,22 @@ class OfferInfoDialog(QDialog):
         self.setWindowTitle(title)
 
         layout = QVBoxLayout(self)
+
+        layout.addWidget(QLabel(_('Pubkeys')))
+        grid = QGridLayout(self)
+        layout.addLayout(grid)
+
+        grid.addWidget(QLabel(_("From")), 0, 0)
+        grid.addWidget(QLabel(_("To")), 1, 0)
+
+        grid.addWidget(QLabel(_("me")), 0 if self.from_me else 1, 1)
+
+        self.counterparty_pubkey_e = QLineEdit()
+        if other_pubkey:
+            self.counterparty_pubkey_e.setText(other_pubkey.hex())
+            self.counterparty_pubkey_e.setReadOnly(True)
+        grid.addWidget(self.counterparty_pubkey_e, 1 if self.from_me else 0, 1)
+
 
         self.pi = PriceInfoBox(self, self.editable)
         layout.addWidget(self.pi)
@@ -97,6 +120,9 @@ class OfferInfoDialog(QDialog):
 
         self.read_from_offerinfo(offerinfo)
         self.update_constants()
+
+    def get_counterparty_pubkey(self):
+        return bytes.fromhex(self.counterparty_pubkey_e.text())
 
     def get_offerinfo(self):
         """

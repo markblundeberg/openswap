@@ -209,16 +209,6 @@ class OpenSwapDialog(QDialog, MessageBoxMixin):
         return False
 
     def make_offer(self, other_pubkey=None, offer=None):
-        if not other_pubkey:
-            d = QInputDialog(parent=self)
-            d.setWindowModality(Qt.WindowModal) # don't freeze all windows
-            d.setLabelText(_("Counterparty pubkey"))
-#            d.setTextValue()
-            d.exec_()
-            if not d.result():
-                return  # user cancelled
-            other_pubkey = bytes.fromhex(d.textValue())
-
         if not offer:
             now = int(time.time())
             offer = openswap.OfferInfo(
@@ -230,11 +220,12 @@ class OpenSwapDialog(QDialog, MessageBoxMixin):
                     give_amount = None,
                     give_ticker = b'BTC',
                     )
-        d = OfferInfoDialog(self, offer, mode='create')
+        d = OfferInfoDialog(self, offer, other_pubkey, mode='create')
 
         res = d.exec_()
         if res:
             try:
+                other_pubkey = d.get_counterparty_pubkey()
                 offerinfo = d.get_offerinfo()
                 pak = openswap.PacketOffer.make(self.key.privkey, other_pubkey, offerinfo)
                 offermsg = openswap.OpenSwapMessage([pak], autopad=204)
@@ -244,7 +235,7 @@ class OpenSwapDialog(QDialog, MessageBoxMixin):
                 self.show_error(str(e))
 
     def view_offer_as_sender(self, other_pubkey, packet):
-        d = OfferInfoDialog(self, packet.offer_info, mode='view_as_sender')
+        d = OfferInfoDialog(self, packet.offer_info, other_pubkey, mode='view_as_sender')
         res = d.exec_()
         if res == 2:  # edit
             now = int(time.time())
@@ -257,7 +248,7 @@ class OpenSwapDialog(QDialog, MessageBoxMixin):
             self.make_offer(other_pubkey, offer)
 
     def view_offer_as_recipient(self, other_pubkey, packet):
-        d = OfferInfoDialog(self, packet.offer_info, mode='view_as_recipient')
+        d = OfferInfoDialog(self, packet.offer_info, other_pubkey, mode='view_as_recipient')
         res = d.exec_()
         if res == 1:  # accept
             offerinfo = d.get_offerinfo()

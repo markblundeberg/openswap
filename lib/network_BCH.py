@@ -175,7 +175,7 @@ class Network(util.DaemonThread):
         if self.blockchain_index not in self.blockchains.keys():
             self.blockchain_index = 0
         # Server for addresses and transactions
-        self.default_server = self.config.get('server', None)
+        self.default_server = self.config.get('server_'+self.currency, None)
         # Sanitize default server
         if self.default_server:
             try:
@@ -459,11 +459,11 @@ class Network(util.DaemonThread):
                 int(proxy['port'])
         except:
             return
-        self.config.set_key('auto_connect_BCH', auto_connect, False)
+        self.config.set_key('auto_connect_'+self.currency, auto_connect, False)
         self.config.set_key("proxy", proxy_str, False)
-        self.config.set_key("server", server, True)
+        self.config.set_key("server_"+self.currency, server, True)
         # abort if changes were not allowed by config
-        if self.config.get('server') != server or self.config.get('proxy') != proxy_str:
+        if self.config.get('server_'+self.currency) != server or self.config.get('proxy') != proxy_str:
             return
         self.auto_connect = auto_connect
         if self.proxy != proxy or self.protocol != protocol:

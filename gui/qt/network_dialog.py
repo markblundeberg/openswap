@@ -328,7 +328,7 @@ class NetworkChoiceLayout(object):
             w.setEnabled(b)
 
     def enable_set_server(self):
-        if self.config.is_modifiable('server'):
+        if self.config.is_modifiable('server_'+self.network.currency):
             enabled = not self.autoconnect_cb.isChecked()
             self.server_host.setEnabled(enabled)
             self.server_port.setEnabled(enabled)

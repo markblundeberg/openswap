@@ -344,8 +344,10 @@ if __name__ == '__main__':
         config_options = args.__dict__
         f = lambda key: config_options[key] is not None and key not in config_variables.get(args.cmd, {}).keys()
         config_options = {key: config_options[key] for key in filter(f, config_options.keys())}
-        if config_options.get('server'):
+        if config_options.get('server_BCH'):
             config_options['auto_connect_BCH'] = False
+        if config_options.get('server_BTC'):
+            config_options['auto_connect_BTC'] = False
 
     config_options['cwd'] = os.getcwd()
 

@@ -250,7 +250,7 @@ class OpenSwapPublicDialog(QDialog, MessageBoxMixin):
                 give_amount = amtw,
                 give_ticker = self.b2 if order_12 else self.b1,
                 )
-        d = OfferInfoDialog(self, offer, mode='create')
+        d = OfferInfoDialog(self, offer, dest_pubkey, mode='create')
         res = d.exec_()
         if res:
             try:

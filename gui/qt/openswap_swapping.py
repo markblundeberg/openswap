@@ -68,7 +68,7 @@ def format_time(tr):
 class SwapDialog(QDialog, MessageBoxMixin):
     need_update=True
 
-    def __init__(self, app, config, swapper):
+    def __init__(self, app, config, swapper, amount1, amount2):
         # probably need config
         # top level window
         QDialog.__init__(self, parent=None)
@@ -77,6 +77,14 @@ class SwapDialog(QDialog, MessageBoxMixin):
         self.app = app
         self.config = config
         self.swapper = swapper
+
+        currency1 = swapper.network1.currency
+        currency2 = swapper.network2.currency
+
+        shownamount1 = format_satoshis_plain_nofloat(amount1) + " " + currency1
+        shownamount2 = format_satoshis_plain_nofloat(amount2) + " " + currency2
+        youstr =  _("You agreed to offer %s at this address:")
+        themstr = _("They agreed to offer %s at this address:")
 
         self.setWindowTitle(_("Atomic Swap"))
 
@@ -96,9 +104,6 @@ class SwapDialog(QDialog, MessageBoxMixin):
         self.instruction_label.setTextFormat(Qt.RichText)
         vbox.addWidget(self.instruction_label)
 
-        currency1 = swapper.network1.currency
-        currency2 = swapper.network2.currency
-
         ##
         # Split parts below
         ##
@@ -111,8 +116,7 @@ class SwapDialog(QDialog, MessageBoxMixin):
         vboxright = QVBoxLayout()
         hbox.addLayout(vboxright)
 
-
-        vboxleft.addWidget(QLabel(_("%s-net swap contract address")%(currency1,) + ':'))
+        vboxleft.addWidget(QLabel((youstr if swapper.i_am_party_A else themstr)%shownamount1))
         addr_e = QLineEdit(str(self.swapper.contract1.address))
         addr_e.setReadOnly(True)
         vboxleft.addWidget(addr_e)
@@ -137,7 +141,7 @@ class SwapDialog(QDialog, MessageBoxMixin):
             hbox.addWidget(self.redeem_button)
 
 
-        vboxright.addWidget(QLabel(_("%s-net swap contract address")%(currency2,) + ':'))
+        vboxright.addWidget(QLabel((themstr if swapper.i_am_party_A else youstr)%shownamount2))
         addr_e = QLineEdit(str(self.swapper.contract2.address))
         addr_e.setReadOnly(True)
         vboxright.addWidget(addr_e)
@@ -400,6 +404,8 @@ class SwapDialog(QDialog, MessageBoxMixin):
         estimate_fee = lambda x:round(feerate * x)
 
         tx = sc.mktx(coins, addr, privkey, secret, estimate_fee, sequence=sequence)
+
+        print(tx.serialize())
 
         def callback(response):
             err = response.get('error')

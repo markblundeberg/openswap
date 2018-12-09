@@ -37,7 +37,7 @@ class OfferInfoDialog(QDialog):
             cancel_text = _("Cancel")
             edit_text = None
             ok_text = _("Send")
-            title = _("Offer (new)")
+            title = _("Private offer (new)")
         #elif mode == "view":
             #self.from_me =
             #self.editable = False
@@ -51,14 +51,14 @@ class OfferInfoDialog(QDialog):
             cancel_text = _("Close")
             edit_text = _("Re-offer")
             ok_text = None
-            title = _("Offer (sent)")
+            title = _("Private offer (sent)")
         elif mode == "view_as_recipient":
             self.from_me = False
             self.editable = False
             cancel_text = _("Cancel")
             edit_text = _("Counter-offer")
             ok_text = _("Accept")
-            title = _("Offer (received)")
+            title = _("Private offer (received)")
         else:
             raise ValueError(mode)
 

@@ -28,6 +28,8 @@ from electroncash.util import print_error
 
 from .transaction_dialog import show_transaction
 
+from electroncash.util import format_satoshis_plain_nofloat, get_satoshis_nofloat
+
 from .openswap_offerinfo import OfferInfoDialog, crypto_list_by_bytes, crypto_list_by_str
 from .openswap_public import prompt_dialog
 
@@ -273,12 +275,12 @@ class OpenSwapDialog(QDialog, MessageBoxMixin):
             self.make_offer(other_pubkey, offer)
 
     def start_swap(self, accept_from_me, other_pubkey, offer_packet, accept_packet):
-        cd = self.main_window.gui_object.currency_daemon
+        currency_daemons = self.main_window.gui_object.currency_daemon
         oinfo = accept_packet.offer_info
 
         ci = crypto_list_by_bytes.index(oinfo.want_ticker)
         currency = crypto_list_by_str[ci]
-        daemon = cd.get(currency)
+        daemon = currency_daemons.get(currency)
         if not daemon:
             self.show_error(_("Currently not connected to %s network. Please open a wallet on this network before continuing.")%(currency,))
             return
@@ -286,7 +288,7 @@ class OpenSwapDialog(QDialog, MessageBoxMixin):
 
         ci = crypto_list_by_bytes.index(oinfo.give_ticker)
         currency = crypto_list_by_str[ci]
-        daemon = cd.get(currency)
+        daemon = currency_daemons.get(currency)
         if not daemon:
             self.show_error(_("Currently not connected to %s network. Please open a wallet on this network before continuing.")%(currency,))
             return
@@ -297,7 +299,7 @@ class OpenSwapDialog(QDialog, MessageBoxMixin):
                                                    network1, network2)
 
         from .openswap_swapping import show_dialog
-        show_dialog(self.app, self.config, swapper)
+        show_dialog(self.app, self.config, swapper, oinfo.want_amount, oinfo.give_amount)
 
 class MyHistoryList(MyTreeWidget):
 #    filter_columns = [2, 3, 4]  # Date, Description, Amount
@@ -308,6 +310,7 @@ class MyHistoryList(MyTreeWidget):
                               5, [])
         self.setSortingEnabled(True)
         self.sortByColumn(0, Qt.AscendingOrder)
+        self.setColumnHidden(4, True)  # hide 'Type' column
 
         self.monospaceFont = QFont(MONOSPACE_FONT)
         self.statusIcons = {}
@@ -396,7 +399,7 @@ class MyHistoryList(MyTreeWidget):
                     message = repr(messagebytes.decode('utf8'))
                 except:
                     message = messagebytes.hex()
-                putitem(0, 'raw', message)
+                putitem(0, 'raw', "raw: " + message)
                 continue
             for i,pak in enumerate(osm.packets):
                 if isinstance(pak, openswap.PacketPad): # skip padding
@@ -409,6 +412,24 @@ class MyHistoryList(MyTreeWidget):
                 except Exception as e:
                     print(e)
                     datastr = str(pak)
+                if isinstance(pak, openswap.PacketOffer):
+                    remain = pak.expire_time - time.time()
+                    if remain > 0:
+                        expstr = _("%d minutes remain")%(round(remain/60.))
+                    else:
+                        expstr = _("expired")
+                    if from_me:
+                        fmtstr = _('You offer %s%s to get %s%s (%s)')
+                    else:
+                        fmtstr = _('They offer %s%s to get %s%s (%s)')
+                    datastr = fmtstr%(
+                        format_satoshis_plain_nofloat(pak.offer_info.give_amount),
+                        pak.offer_info.give_ticker.decode('utf8'),
+                        format_satoshis_plain_nofloat(pak.offer_info.want_amount),
+                        pak.offer_info.want_ticker.decode('utf8'),
+                        expstr,
+                        )
+
                 item = putitem(i, 'OS', datastr)
                 item.setData(5, Qt.UserRole, pak)
 
@@ -475,7 +496,7 @@ class MyHistoryList(MyTreeWidget):
         if to_me:
             menu.addAction(_("Reply raw message"), lambda: self.parent.write_message(from_pubkey.hex()))
         elif to_pubkey:
-            menu.addAction(_("Write another message"), lambda: self.parent.write_message(to_pubkey.hex()))
+            menu.addAction(_("Reply raw message"), lambda: self.parent.write_message(to_pubkey.hex()))
 
         menu.addAction(_("Copy {}").format(column_title), lambda: self.parent.main_window.app.clipboard().setText(column_data))
 

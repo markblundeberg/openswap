@@ -68,7 +68,7 @@ class OfferInfoDialog(QDialog):
         layout = QVBoxLayout(self)
 
         layout.addWidget(QLabel(_('Pubkeys')))
-        grid = QGridLayout(self)
+        grid = QGridLayout()
         layout.addLayout(grid)
 
         grid.addWidget(QLabel(_("From")), 0, 0)

@@ -124,7 +124,7 @@ class Daemon(DaemonThread):
         if currency == 'BTC':
             from .network_BTC import Network
         else:
-            from .network_BCH import Network
+            from .network import Network
         if config.get('offline'):
             self.network = None
         else:

@@ -39,7 +39,7 @@ from .bitcoin import *
 from .simple_config import SimpleConfig
 from .i18n import _
 from .interface import Connection, Interface
-from . import blockchain_BCH
+from . import blockchain
 from .version import PACKAGE_VERSION, PROTOCOL_VERSION
 
 
@@ -169,7 +169,7 @@ class Network(util.DaemonThread):
         util.DaemonThread.__init__(self)
         self.config = SimpleConfig(config) if isinstance(config, dict) else config
         self.num_server = 10 if not self.config.get('oneserver') else 0
-        self.blockchains = blockchain_BCH.read_blockchains(self.config)
+        self.blockchains = blockchain.read_blockchains(self.config)
         self.print_error("blockchains", self.blockchains.keys())
         self.blockchain_index = config.get('blockchain_index', 0)
         if self.blockchain_index not in self.blockchains.keys():
@@ -845,8 +845,8 @@ class Network(util.DaemonThread):
 
             data = bfh(hexdata)
             try:
-                blockchain_BCH.verify_proven_chunk(request_base_height, data)
-            except blockchain_BCH.VerifyError as e:
+                blockchain.verify_proven_chunk(request_base_height, data)
+            except blockchain.VerifyError as e:
                 interface.print_error('verify_proven_chunk failed: {}'.format(e))
                 self.connection_down(interface.server)
                 return
@@ -947,9 +947,9 @@ class Network(util.DaemonThread):
             hexheader = result
 
         # Simple header request.
-        header = blockchain_BCH.deserialize_header(bfh(hexheader), height)
+        header = blockchain.deserialize_header(bfh(hexheader), height)
         # Is there a blockchain that already includes this header?
-        chain = blockchain_BCH.check_header(header)
+        chain = blockchain.check_header(header)
         if interface.mode == 'backward':
             if chain:
                 interface.print_error("binary search")
@@ -1135,7 +1135,7 @@ class Network(util.DaemonThread):
 
         header_hex = header_dict['hex']
         height = header_dict['height']
-        header = blockchain_BCH.deserialize_header(bfh(header_hex), height)
+        header = blockchain.deserialize_header(bfh(header_hex), height)
 
         if bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT is not None:
             if height <= bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT:
@@ -1151,14 +1151,14 @@ class Network(util.DaemonThread):
         if interface.mode != 'default':
             return
 
-        b = blockchain_BCH.check_header(header) # Does it match the hash of a known header.
+        b = blockchain.check_header(header) # Does it match the hash of a known header.
         if b:
             interface.blockchain = b
             self.switch_lagging_interface()
             self.notify('updated')
             self.notify('interfaces')
             return
-        b = blockchain_BCH.can_connect(header) # Is it the next header on a given blockchain.
+        b = blockchain.can_connect(header) # Is it the next header on a given blockchain.
         if b:
             interface.blockchain = b
             b.save_header(header)
@@ -1248,7 +1248,7 @@ class Network(util.DaemonThread):
 
         header_hash = Hash(bfh(header))
         byte_branches = [ bytes(reversed(bfh(v))) for v in merkle_branch ]
-        proven_merkle_root = blockchain_BCH.root_from_proof(header_hash, byte_branches, header_height)
+        proven_merkle_root = blockchain.root_from_proof(header_hash, byte_branches, header_height)
         if proven_merkle_root != expected_merkle_root:
             interface.print_error("Sent incorrect merkle branch, expected: {}, proved: {}".format(bitcoin.NetworkConstants.VERIFICATION_BLOCK_MERKLE_ROOT, util.hfu(reversed(proven_merkle_root))))
             return False

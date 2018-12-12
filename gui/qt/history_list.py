@@ -70,6 +70,10 @@ class HistoryList(MyTreeWidget):
     def get_domain(self):
         '''Replaced in address_dialog.py'''
         return self.wallet.get_addresses()
+
+    @rate_limited(1.0) # We rate limit the history list refresh no more than once every second
+    def update(self):
+        super().update()
         
     @profiler
     def on_update(self):
@@ -121,7 +125,9 @@ class HistoryList(MyTreeWidget):
         else:
             tx_hash = item.data(0, Qt.UserRole)
             tx = self.wallet.transactions.get(tx_hash)
-            self.parent.show_transaction(tx)
+            if tx:
+                label = self.wallet.get_label(tx_hash) or None
+                self.parent.show_transaction(tx, label)
 
     def update_labels(self):
         root = self.invisibleRootItem()

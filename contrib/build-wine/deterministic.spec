@@ -22,6 +22,8 @@ hiddenimports += collect_submodules('keepkeylib')
 # Add libusb binary
 binaries = [("c:/python3.5.4/libusb-1.0.dll", ".")]
 
+binaries += [('C:/tmp/libsecp256k1.dll', '.')]
+
 # Workaround for "Retro Look":
 binaries += [b for b in collect_dynamic_libs('PyQt5') if 'qwindowsvista' in b[0]]
 
@@ -32,6 +34,7 @@ datas = [
     (home+'lib/wordlist/english.txt', 'electroncash/wordlist'),
     (home+'lib/locale', 'electroncash/locale'),
     (home+'plugins', 'electroncash_plugins'),
+    ('C:\\Program Files (x86)\\ZBar\\bin\\', '.'),
 ]
 datas += collect_data_files('trezorlib')
 datas += collect_data_files('btchip')
@@ -67,6 +70,23 @@ for d in a.datas:
     if 'pyconfig' in d[0]: 
         a.datas.remove(d)
         break
+
+# Strip out parts of Qt that we never use. Reduces binary size by tens of MBs. see #4815
+qt_bins2remove=('qt5web', 'qt53d', 'qt5game', 'qt5designer', 'qt5quick',
+                'qt5location', 'qt5test', 'qt5xml', r'pyqt5\qt\qml\qtquick')
+print("Removing Qt binaries:", *qt_bins2remove)
+for x in a.binaries.copy():
+    for r in qt_bins2remove:
+        if x[0].lower().startswith(r):
+            a.binaries.remove(x)
+            print('----> Removed x =', x)
+qt_data2remove=(r'pyqt5\qt\translations\qtwebengine_locales', )
+print("Removing Qt datas:", *qt_data2remove)
+for x in a.datas.copy():
+    for r in qt_data2remove:
+        if x[0].lower().startswith(r):
+            a.datas.remove(x)
+            print('----> Removed x =', x)
 
 # hotfix for #3171 (pre-Win10 binaries)
 a.binaries = [x for x in a.binaries if not x[1].lower().startswith(r'c:\windows')]

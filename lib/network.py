@@ -23,6 +23,7 @@
 
 import time
 import queue
+import os
 import stat
 import errno
 import random
@@ -31,6 +32,7 @@ import select
 from collections import defaultdict
 import threading
 import socket
+import json
 
 import socks
 from . import util
@@ -43,6 +45,7 @@ from . import blockchain
 from .version import PACKAGE_VERSION, PROTOCOL_VERSION
 
 
+DEFAULT_AUTO_CONNECT = True
 NODES_RETRY_INTERVAL = 60
 SERVER_RETRY_INTERVAL = 10
 
@@ -73,7 +76,6 @@ def parse_servers(result):
             servers[host] = out
     return servers
 
-
 def filter_version(servers):
     def is_recent(version):
         try:
@@ -93,11 +95,13 @@ def filter_protocol(hostmap, protocol = 's'):
             eligible.append(serialize_server(host, port, protocol))
     return eligible
 
-
-def pick_random_server(hostmap = None, protocol = 's', exclude_set = set()):
+def get_eligible_servers(hostmap=None, protocol="s", exclude_set=set()):
     if hostmap is None:
         hostmap = bitcoin.NetworkConstants.DEFAULT_SERVERS
-    eligible = list(set(filter_protocol(hostmap, protocol)) - exclude_set)
+    return list(set(filter_protocol(hostmap, protocol)) - exclude_set)
+
+def pick_random_server(hostmap = None, protocol = 's', exclude_set = set()):
+    eligible = get_eligible_servers(hostmap, protocol, exclude_set)
     return random.choice(eligible) if eligible else None
 
 
@@ -175,16 +179,9 @@ class Network(util.DaemonThread):
         if self.blockchain_index not in self.blockchains.keys():
             self.blockchain_index = 0
         # Server for addresses and transactions
-        self.default_server = self.config.get('server_'+self.currency, None)
-        # Sanitize default server
-        if self.default_server:
-            try:
-                deserialize_server(self.default_server)
-            except:
-                self.print_error('Warning: failed to parse server-string; falling back to random.')
-                self.default_server = None
-        if not self.default_server:
-            self.default_server = pick_random_server()
+        self.blacklisted_servers = set(self.config.get('server_blacklist', []))
+        self.print_error("server blacklist: {}".format(self.blacklisted_servers))
+        self.default_server = self.get_config_server()
 
         self.lock = threading.Lock()
         # locks: if you need to take multiple ones, acquire them in the order they are defined here!
@@ -200,6 +197,7 @@ class Network(util.DaemonThread):
         if bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT is None:
             self.verifications_required = 3
         self.checkpoint_servers_verified = {}
+        self.checkpoint_height = bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT
         self.debug = False
         self.irc_servers = {} # returned by interface (list from irc)
         self.recent_servers = self.read_recent_servers('bch')
@@ -230,7 +228,7 @@ class Network(util.DaemonThread):
         # to or have an ongoing connection with
         self.interface = None                   # note: needs self.interface_lock
         self.interfaces = {}                    # note: needs self.interface_lock
-        self.auto_connect = self.config.get('auto_connect_BCH', True)
+        self.auto_connect = self.config.get('auto_connect_BCH', DEFAULT_AUTO_CONNECT)
         self.connecting = set()
         self.requested_chunks = set()
         self.socket_queue = queue.Queue()
@@ -386,19 +384,31 @@ class Network(util.DaemonThread):
                     out[host] = { protocol:port }
         return out
 
-    def start_interface(self, server):
-        if (not server in self.interfaces and not server in self.connecting):
-            if server == self.default_server:
-                self.print_error("connecting to %s as new interface" % server)
+    def start_interface(self, server_key):
+        """Start the given server if it is not already active or being connected to.
+
+        Arguments:
+        server_key --- server specifier in the form of '<host>:<port>:<protocol>'
+        """
+        if (not server_key in self.interfaces and not server_key in self.connecting):
+            if server_key == self.default_server:
+                self.print_error("connecting to %s as new interface" % server_key)
                 self.set_status('connecting')
-            self.connecting.add(server)
-            c = Connection(server, self.socket_queue, self.config.path)
+            self.connecting.add(server_key)
+            c = Connection(server_key, self.socket_queue, self.config.path)
+
+    def get_unavailable_servers(self):
+        exclude_set = set(self.interfaces)
+        exclude_set = exclude_set.union(self.connecting)
+        exclude_set = exclude_set.union(self.disconnected_servers)
+        exclude_set = exclude_set.union(self.blacklisted_servers)
+        return exclude_set
 
     def start_random_interface(self):
-        exclude_set = self.disconnected_servers.union(set(self.interfaces))
-        server = pick_random_server(self.get_servers(), self.protocol, exclude_set)
-        if server:
-            self.start_interface(server)
+        exclude_set = self.get_unavailable_servers()
+        server_key = pick_random_server(self.get_servers(), self.protocol, exclude_set)
+        if server_key:
+            self.start_interface(server_key)
 
     def start_interfaces(self):
         self.start_interface(self.default_server)
@@ -449,6 +459,13 @@ class Network(util.DaemonThread):
         self.socket_queue = queue.Queue()
 
     def set_parameters(self, host, port, protocol, proxy, auto_connect):
+        try:
+            self.save_parameters(host, port, protocol, proxy, auto_connect)
+        except ValueError:
+            return
+        self.load_parameters()
+
+    def save_parameters(self, host, port, protocol, proxy, auto_connect):
         proxy_str = serialize_proxy(proxy)
         server = serialize_server(host, port, protocol)
         # sanitize parameters
@@ -458,24 +475,41 @@ class Network(util.DaemonThread):
                 proxy_modes.index(proxy["mode"]) + 1
                 int(proxy['port'])
         except:
-            return
+            raise ValueError("invalid server or proxy")
+
         self.config.set_key('auto_connect_'+self.currency, auto_connect, False)
         self.config.set_key("proxy", proxy_str, False)
         self.config.set_key("server_"+self.currency, server, True)
-        # abort if changes were not allowed by config
         if self.config.get('server_'+self.currency) != server or self.config.get('proxy') != proxy_str:
-            return
-        self.auto_connect = auto_connect
+            raise ValueError("changes were not allowed by config")
+
+    def load_parameters(self):
+        server = self.get_config_server()
+        protocol = deserialize_server(server)[2]
+        proxy = deserialize_proxy(self.config.get('proxy'))
+        self.auto_connect = self.config.get('auto_connect_'+self.currency, DEFAULT_AUTO_CONNECT)
         if self.proxy != proxy or self.protocol != protocol:
             # Restart the network defaulting to the given server
             self.stop_network()
             self.default_server = server
             self.start_network(protocol, proxy)
         elif self.default_server != server:
-            self.switch_to_interface(server)
+            self.switch_to_interface(server, self.SWITCH_SET_PARAMETERS)
         else:
             self.switch_lagging_interface()
             self.notify('updated')
+
+    def get_config_server(self):
+        server = self.config.get('server_'+self.currency, None)
+        if server:
+            try:
+                deserialize_server(server)
+            except:
+                self.print_error('Warning: failed to parse server-string; falling back to random.')
+                server = None
+        if (not server) or (server in self.blacklisted_servers):
+            server = pick_random_server()
+        return server
 
     def switch_to_random_interface(self):
         '''Switch to a random connected server other than the current one'''
@@ -493,9 +527,16 @@ class Network(util.DaemonThread):
             filtered = list(map(lambda x:x[0], filter(lambda x: x[1].tip_header==header, self.interfaces.items())))
             if filtered:
                 choice = random.choice(filtered)
-                self.switch_to_interface(choice)
+                self.switch_to_interface(choice, self.SWITCH_LAGGING)
 
-    def switch_to_interface(self, server):
+    SWITCH_DEFAULT = 'SWITCH_DEFAULT'
+    SWITCH_RANDOM = 'SWITCH_RANDOM'
+    SWITCH_LAGGING = 'SWITCH_LAGGING'
+    SWITCH_SOCKET_LOOP = 'SWITCH_SOCKET_LOOP'
+    SWITCH_FOLLOW_CHAIN = 'SWITCH_FOLLOW_CHAIN'
+    SWITCH_SET_PARAMETERS = 'SWITCH_SET_PARAMETERS'
+
+    def switch_to_interface(self, server, switch_reason=None):
         '''Switch to server as our interface.  If no connection exists nor
         being opened, start a thread to connect.  The actual switch will
         happen on receipt of the connection notification.  Do nothing
@@ -507,7 +548,7 @@ class Network(util.DaemonThread):
             return
         i = self.interfaces[server]
         if self.interface != i:
-            self.print_error("switching to", server)
+            self.print_error("switching to '{}' reason '{}'".format(server, switch_reason))
             # stop any current interface in order to terminate subscriptions
             # fixme: we don't want to close headers sub
             #self.close_interface(self.interface)
@@ -681,10 +722,15 @@ class Network(util.DaemonThread):
                 if callback in v:
                     v.remove(callback)
 
-    def connection_down(self, server):
+    def connection_down(self, server, blacklist=False):
         '''A connection to server either went down, or was never made.
         We distinguish by whether it is in self.interfaces.'''
-        self.disconnected_servers.add(server)
+        if blacklist:
+            self.blacklisted_servers.add(server)
+            # rt12 --- there might be a better place for this.
+            self.config.set_key("server_blacklist", list(self.blacklisted_servers), True)
+        else:
+            self.disconnected_servers.add(server)
         if server == self.default_server:
             self.set_status('disconnected')
         if server in self.interfaces:
@@ -694,19 +740,17 @@ class Network(util.DaemonThread):
             if b.catch_up == server:
                 b.catch_up = None
 
-    def new_interface(self, server, socket):
-        self.add_recent_server(server)
+    def new_interface(self, server_key, socket):
+        self.add_recent_server(server_key)
 
-        interface = Interface(server, socket)
+        interface = Interface(server_key, socket)
         interface.blockchain = None
         interface.tip_header = None
         interface.tip = 0
-        if self.verified_checkpoint:
-            interface.set_mode('default')
-        else:
-            interface.set_mode('verification')
+        interface.set_mode(Interface.MODE_VERIFICATION)
+
         with self.interface_lock:
-            self.interfaces[server] = interface
+            self.interfaces[server_key] = interface
 
         # server.version should be the first message
         params = [PACKAGE_VERSION, PROTOCOL_VERSION]
@@ -714,8 +758,8 @@ class Network(util.DaemonThread):
         # The interface will immediately respond with it's last known header.
         self.queue_request('blockchain.headers.subscribe', [], interface)
 
-        if server == self.default_server:
-            self.switch_to_interface(server)
+        if server_key == self.default_server:
+            self.switch_to_interface(server_key, self.SWITCH_DEFAULT)
 
     def maintain_sockets(self):
         '''Socket maintenance.'''
@@ -742,7 +786,8 @@ class Network(util.DaemonThread):
         now = time.time()
         # nodes
         with self.interface_lock:
-            if len(self.interfaces) + len(self.connecting) < self.num_server:
+            server_count = len(self.interfaces) + len(self.connecting)
+            if server_count < self.num_server:
                 self.start_random_interface()
                 if now - self.nodes_retry_time > NODES_RETRY_INTERVAL:
                     self.print_error('network: retrying connections')
@@ -761,7 +806,7 @@ class Network(util.DaemonThread):
                             self.disconnected_servers.remove(self.default_server)
                             self.server_retry_time = now
                     else:
-                        self.switch_to_interface(self.default_server)
+                        self.switch_to_interface(self.default_server, self.SWITCH_SOCKET_LOOP)
             else:
                 if self.config.is_fee_estimates_update_required():
                     self.request_fee_estimates()
@@ -840,15 +885,16 @@ class Network(util.DaemonThread):
             header = hexdata[header_offset : header_offset + header_hexsize]
             if not self.validate_checkpoint_result(interface, result["root"], result["branch"], header, header_height):
                 # Got checkpoint validation data, server failed to provide proof.
-                self.connection_down(interface.server)
+                interface.print_error("disconnecting server for incorrect checkpoint proof")
+                self.connection_down(interface.server, blacklist=True)
                 return
 
             data = bfh(hexdata)
             try:
                 blockchain.verify_proven_chunk(request_base_height, data)
             except blockchain.VerifyError as e:
-                interface.print_error('verify_proven_chunk failed: {}'.format(e))
-                self.connection_down(interface.server)
+                interface.print_error('disconnecting server for failed verify_proven_chunk: {}'.format(e))
+                self.connection_down(interface.server, blacklist=True)
                 return
 
             proof_was_provided = True
@@ -860,23 +906,53 @@ class Network(util.DaemonThread):
         verification_top_height = self.checkpoint_servers_verified.get(interface.server, {}).get('height', None)
         was_verification_request = verification_top_height and request_base_height == verification_top_height - 147 + 1 and actual_header_count == 147
 
-        if interface.mode == 'verification':
-            if not proof_was_provided or not was_verification_request:
-                self.connection_down(interface.server)
+        initial_interface_mode = interface.mode
+        if interface.mode == Interface.MODE_VERIFICATION:
+            if not was_verification_request:
+                interface.print_error("disconnecting unverified server for sending unrelated header chunk")
+                self.connection_down(interface.server, blacklist=True)
+                return
+            if not proof_was_provided:
+                interface.print_error("disconnecting unverified server for sending verification header chunk without proof")
+                self.connection_down(interface.server, blacklist=True)
                 return
 
-            self.apply_successful_verification(interface, request_params[2], result['root'])
-            # If this is not the final verification, we throw it away.
-            if interface.mode == 'verification':
+            if not self.apply_successful_verification(interface, request_params[2], result['root']):
                 return
+            # We connect this verification chunk into the longest chain.
+            target_blockchain = self.blockchains[0]
+        else:
+            target_blockchain = interface.blockchain
 
-        connect = interface.blockchain.connect_chunk(request_base_height, hexdata, proof_was_provided)
-        if not connect:
-            interface.print_error("discarded unconnected chunk, height={} count={}".format(request_base_height, actual_header_count))
-            self.connection_down(interface.server)
+        chunk_data = bfh(hexdata)
+        connect_state = target_blockchain.connect_chunk(request_base_height, chunk_data, proof_was_provided)
+        if connect_state == blockchain.CHUNK_ACCEPTED:
+            interface.print_error("connected chunk, height={} count={} proof_was_provided={}".format(request_base_height, actual_header_count, proof_was_provided))
+        elif connect_state == blockchain.CHUNK_FORKS:
+            interface.print_error("identified forking chunk, height={} count={}".format(request_base_height, actual_header_count))
+            # We actually have all the headers up to the bad point. In theory we
+            # can use them to detect a fork point in some cases. But that's bonus
+            # work for someone later.
+            # Discard the chunk and do a normal search for the fork point.
+            # Note that this will not give us the right blockchain, the
+            # syncing does not work that way historically.  That might
+            # wait until either a new block appears, or
+            if False:
+                interface.blockchain = None
+                interface.set_mode(Interface.MODE_BACKWARD)
+                interface.bad = request_base_height + actual_header_count - 1
+                interface.bad_header = blockchain.HeaderChunk(request_base_height, chunk_data).get_header_at_height(interface.bad)
+                self.request_header(interface, min(interface.tip, interface.bad - 1))
             return
         else:
-            interface.print_error("connected chunk, height={} count={} proof_was_provided={}".format(request_base_height, actual_header_count, proof_was_provided))
+            interface.print_error("discarded bad chunk, height={} count={} reason={}".format(request_base_height, actual_header_count, connect_state))
+            self.connection_down(interface.server)
+            return
+
+        # This interface was verified above. Get it syncing.
+        if initial_interface_mode == Interface.MODE_VERIFICATION:
+            self._process_latest_tip(interface)
+            return
 
         # If not finished, get the next chunk.
         if proof_was_provided and not was_verification_request:
@@ -886,7 +962,7 @@ class Network(util.DaemonThread):
             if interface.blockchain.height() < interface.tip:
                 self.request_headers(interface, request_base_height + actual_header_count, 2016)
             else:
-                interface.set_mode('default')
+                interface.set_mode(Interface.MODE_DEFAULT)
                 interface.print_error('catch up done', interface.blockchain.height())
                 interface.blockchain.catch_up = None
         self.notify('updated')
@@ -903,7 +979,7 @@ class Network(util.DaemonThread):
         until it gets handled in the response to it's first header
         request.
         '''
-        #interface.print_error("requesting header %d" % height)
+        interface.print_error("requesting header %d" % height)
         if height > bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT:
             params = [height]
         else:
@@ -920,7 +996,7 @@ class Network(util.DaemonThread):
             return
 
         if not request:
-            interface.print_error("unsolicited header, no request, params={}".format(response['params']))
+            interface.print_error("disconnecting server for sending unsolicited header, no request, params={}".format(response['params']), blacklist=True)
             self.connection_down(interface.server)
             return
         request_params = request[1]
@@ -950,24 +1026,31 @@ class Network(util.DaemonThread):
         header = blockchain.deserialize_header(bfh(hexheader), height)
         # Is there a blockchain that already includes this header?
         chain = blockchain.check_header(header)
-        if interface.mode == 'backward':
+        if interface.mode == Interface.MODE_BACKWARD:
             if chain:
                 interface.print_error("binary search")
-                interface.set_mode('binary')
+                interface.set_mode(Interface.MODE_BINARY)
                 interface.blockchain = chain
                 interface.good = height
                 next_height = (interface.bad + interface.good) // 2
             else:
-                if height == 0:
+                # A backwards header request should not happen before the checkpoint height. It isn't requested in this
+                # context, and it isn't requested anywhere else. If this happens it is an error. Additionally, if the
+                # checkpoint height header was requested and it does not connect, then there's not much Electron-SV
+                # can do about it (that we're going to bother). We depend on the checkpoint being relevant for the
+                # blockchain the user is running against.
+                if height <= bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT:
                     self.connection_down(interface.server)
                     next_height = None
                 else:
                     interface.bad = height
                     interface.bad_header = header
                     delta = interface.tip - height
-                    next_height = max(0, interface.tip - 2 * delta)
+                    # If the longest chain does not connect at any point we check to the chain this interface is
+                    # serving, then we fall back on the checkpoint height which is expected to work.
+                    next_height = max(bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT, interface.tip - 2 * delta)
 
-        elif interface.mode == 'binary':
+        elif interface.mode == Interface.MODE_BINARY:
             if chain:
                 interface.good = height
                 interface.blockchain = chain
@@ -993,7 +1076,7 @@ class Network(util.DaemonThread):
                         interface.print_error('checkpoint conflicts with existing fork', branch.path())
                         branch.write(b'', 0)
                         branch.save_header(interface.bad_header)
-                        interface.set_mode('catch_up')
+                        interface.set_mode(Interface.MODE_CATCH_UP)
                         interface.blockchain = branch
                         next_height = interface.bad + 1
                         interface.blockchain.catch_up = interface.server
@@ -1006,20 +1089,20 @@ class Network(util.DaemonThread):
                             self.blockchains[interface.bad] = b
                             interface.blockchain = b
                             interface.print_error("new chain", b.base_height)
-                            interface.set_mode('catch_up')
+                            interface.set_mode(Interface.MODE_CATCH_UP)
                             next_height = interface.bad + 1
                             interface.blockchain.catch_up = interface.server
                     else:
                         assert bh == interface.good
                         if interface.blockchain.catch_up is None and bh < interface.tip:
                             interface.print_error("catching up from %d"% (bh + 1))
-                            interface.set_mode('catch_up')
+                            interface.set_mode(Interface.MODE_CATCH_UP)
                             next_height = bh + 1
                             interface.blockchain.catch_up = interface.server
 
                 self.notify('updated')
 
-        elif interface.mode == 'catch_up':
+        elif interface.mode == Interface.MODE_CATCH_UP:
             can_connect = interface.blockchain.can_connect(header)
             if can_connect:
                 interface.blockchain.save_header(header)
@@ -1027,7 +1110,7 @@ class Network(util.DaemonThread):
             else:
                 # go back
                 interface.print_error("cannot connect", height)
-                interface.set_mode('backward')
+                interface.set_mode(Interface.MODE_BACKWARD)
                 interface.bad = height
                 interface.bad_header = header
                 next_height = height - 1
@@ -1038,18 +1121,18 @@ class Network(util.DaemonThread):
                 interface.blockchain.catch_up = None
                 self.switch_lagging_interface()
                 self.notify('updated')
-        elif interface.mode == 'default':
+        elif interface.mode == Interface.MODE_DEFAULT:
             interface.print_error("ignored header {} received in default mode".format(height))
             return
 
         # If not finished, get the next header
         if next_height:
-            if interface.mode == 'catch_up' and interface.tip > next_height:
+            if interface.mode == Interface.MODE_CATCH_UP and interface.tip > next_height:
                 self.request_headers(interface, next_height, 2016)
             else:
                 self.request_header(interface, next_height)
         else:
-            interface.set_mode('default')
+            interface.set_mode(Interface.MODE_DEFAULT)
             self.notify('updated')
         # refresh network dialog
         self.notify('interfaces')
@@ -1091,7 +1174,7 @@ class Network(util.DaemonThread):
     def init_headers_file(self):
         b = self.blockchains[0]
         filename = b.path()
-        length = 80 * (bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT - 1)
+        length = 80 * (bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT + 1)
         if not os.path.exists(filename) or os.path.getsize(filename) < length:
             with open(filename, 'wb') as f:
                 if length>0:
@@ -1137,19 +1220,28 @@ class Network(util.DaemonThread):
         height = header_dict['height']
         header = blockchain.deserialize_header(bfh(header_hex), height)
 
-        if bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT is not None:
-            if height <= bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT:
-                self.connection_down(interface.server)
-                return
+        # If the server is behind the verification height, then something is wrong with it.  Drop it.
+        if bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT is not None and height <= bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT:
+            self.connection_down(interface.server)
+            return
 
+        # We will always update the tip for the server.
         interface.tip_header = header
         interface.tip = height
-        if interface.mode == 'verification':
+
+        if interface.mode == Interface.MODE_VERIFICATION:
+            # If the server has already had this requested, this will be a no-op.
             self.request_initial_proof_and_headers(interface)
             return
 
-        if interface.mode != 'default':
+        self._process_latest_tip(interface)
+
+    def _process_latest_tip(self, interface):
+        if interface.mode != Interface.MODE_DEFAULT:
             return
+
+        header = interface.tip_header
+        height = interface.tip
 
         b = blockchain.check_header(header) # Does it match the hash of a known header.
         if b:
@@ -1166,67 +1258,83 @@ class Network(util.DaemonThread):
             self.notify('updated')
             self.notify('interfaces')
             return
-        tip = max([x.height() for x in self.blockchains.values()])
-        if tip >=0:
-            interface.set_mode('backward')
+
+        heights = [x.height() for x in self.blockchains.values()]
+        tip = max(heights)
+        if tip > bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT:
+            interface.print_error("attempt to reconcile longest chain tip={} heights={}".format(tip, heights))
+            interface.set_mode(Interface.MODE_BACKWARD)
             interface.bad = height
             interface.bad_header = header
             self.request_header(interface, min(tip, height - 1))
         else:
+            interface.print_error("attempt to catch up tip={} heights={}".format(tip, heights))
             chain = self.blockchains[0]
             if chain.catch_up is None:
                 chain.catch_up = interface
-                interface.set_mode('catch_up')
+                interface.set_mode(Interface.MODE_CATCH_UP)
                 interface.blockchain = chain
                 interface.print_error("switching to catchup mode", tip)
-                self.request_header(interface, 0)
+                self.request_header(interface, bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT + 1)
             else:
                 interface.print_error("chain already catching up with", chain.catch_up.server)
 
     def request_initial_proof_and_headers(self, interface):
         # This will be the initial topmost header response.  But we might get new blocks.
         if interface.server not in self.checkpoint_servers_verified:
-            top_height = bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT
+            interface.print_error("request_initial_proof_and_headers pending")
+
+            top_height = self.checkpoint_height
             # If there is no known checkpoint height for this network, we look to get
             # a given number of confirmations for the same conservative height.
-            if top_height is None:
-                # We want to make sure we ask for the same checkpoint height.
-                if len(self.checkpoint_servers_verified):
-                    top_height = next(iter(self.checkpoint_servers_verified.values()))['height']
-                else:
-                    top_height = interface.tip - 100
-            self.checkpoint_servers_verified[interface.server] = { 'root': None, 'height': top_height }
+            if self.checkpoint_height is None:
+                self.checkpoint_height = interface.tip - 100
+            self.checkpoint_servers_verified[interface.server] = { 'root': None, 'height': self.checkpoint_height }
             # We need at least 147 headers before the post checkpoint headers for daa calculations.
-            self._request_headers(interface, top_height - 147 + 1, 147, top_height)
+            self._request_headers(interface, self.checkpoint_height - 147 + 1, 147, self.checkpoint_height)
+        else:
+            # We already have them verified, maybe we got disconnected.
+            interface.print_error("request_initial_proof_and_headers bypassed")
+            interface.set_mode(Interface.MODE_DEFAULT)
+            self._process_latest_tip(interface)
 
     def apply_successful_verification(self, interface, checkpoint_height, checkpoint_root):
         known_roots = [ v['root'] for v in self.checkpoint_servers_verified.values() if v['root'] is not None ]
         if len(known_roots) > 0 and checkpoint_root != known_roots[0]:
-            interface.print_error("server sent inconsistent root {}".format(checkpoint_root))
-            return
+            interface.print_error("server sent inconsistent root '{}'".format(checkpoint_root))
+            self.connection_down(interface.server)
+            return False
         self.checkpoint_servers_verified[interface.server]['root'] = checkpoint_root
 
-        self.verifications_required -= 1
-        if self.verifications_required > 0:
-            interface.print_error("received verification {}".format(self.verifications_required + 1))
-            return
-        interface.print_error("received verification {}".format(self.verifications_required + 1))
+        # rt12 --- checkpoint generation currently disabled.
+        if False:
+            interface.print_error("received verification {}".format(self.verifications_required))
+            self.verifications_required -= 1
+            if self.verifications_required > 0:
+                return False
 
-        if bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT is None:
-            bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT = checkpoint_height
-            bitcoin.NetworkConstants.VERIFICATION_BLOCK_MERKLE_ROOT = checkpoint_root
+            if bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT is None:
+                bitcoin.NetworkConstants.VERIFICATION_BLOCK_HEIGHT = checkpoint_height
+                bitcoin.NetworkConstants.VERIFICATION_BLOCK_MERKLE_ROOT = checkpoint_root
 
-            network_name = "TESTNET" if bitcoin.NetworkConstants.TESTNET else "MAINNET"
-            self.print_error("Found verified checkpoint for {} at height {} with merkle root {!r}".format(network_name, checkpoint_height, checkpoint_root))
+                network_name = "TESTNET" if bitcoin.NetworkConstants.TESTNET else "MAINNET"
+                self.print_error("found verified checkpoint for {} at height {} with merkle root {!r}".format(network_name, checkpoint_height, checkpoint_root))
 
-        self.init_headers_file()
-        self.verified_checkpoint = True
+        if not self.verified_checkpoint:
+            self.init_headers_file()
+            self.verified_checkpoint = True
 
-        with self.interface_lock:
-            interfaces = list(self.interfaces.values())
-        for interface_entry in interfaces:
-            interface_entry.blockchain = self.blockchains[0]
-            interface_entry.set_mode('default')
+        # rt12 --- checkpoint generation currently disabled.
+        if False:
+            with self.interface_lock:
+                interfaces = list(self.interfaces.values())
+            for interface_entry in interfaces:
+                interface_entry.blockchain = self.blockchains[0]
+                interface_entry.set_mode(Interface.MODE_DEFAULT)
+
+        interface.print_error("server was verified correctly")
+        interface.set_mode(Interface.MODE_DEFAULT)
+        return True
 
     def validate_checkpoint_result(self, interface, merkle_root, merkle_branch, header, header_height):
         '''
@@ -1277,7 +1385,7 @@ class Network(util.DaemonThread):
                 interfaces = list(self.interfaces.values())
             for i in interfaces:
                 if i.blockchain == blockchain:
-                    self.switch_to_interface(i.server)
+                    self.switch_to_interface(i.server, self.SWITCH_FOLLOW_CHAIN)
                     break
         else:
             raise BaseException('blockchain not found', index)

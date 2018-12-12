@@ -174,10 +174,13 @@ class DaemonThread(threading.Thread, PrintError):
             self.running = False
 
     def on_stop(self):
-        if 'ANDROID_DATA' in os.environ and 'ANDROID_NATIVE_UI' not in os.environ:
-            import jnius
-            jnius.detach()
-            self.print_error("jnius detach")
+        if 'ANDROID_DATA' in os.environ:
+            try:
+                import jnius
+                jnius.detach()
+                self.print_error("jnius detach")
+            except ImportError:
+                pass  # Chaquopy detaches automatically.
         self.print_error("stopped")
 
 
@@ -249,45 +252,31 @@ def profiler(func):
 
 
 def android_ext_dir():
-    if 'ANDROID_EXT_DIR' in os.environ:
-        return os.environ['ANDROID_EXT_DIR']
-    else:
+    try:
         import jnius
         env = jnius.autoclass('android.os.Environment')
-        return env.getExternalStorageDirectory().getPath()
+    except ImportError:
+        from android.os import Environment as env  # Chaquopy import hook
+    return env.getExternalStorageDirectory().getPath()
 
 def android_data_dir():
-    if 'ANDROID_DATA_DIR' in os.environ:
-        return os.environ['ANDROID_DATA_DIR']
-    else:
+    try:
         import jnius
-        PythonActivity = jnius.autoclass('org.kivy.android.PythonActivity')
-        return PythonActivity.mActivity.getFilesDir().getPath() + '/data'
+        context = jnius.autoclass('org.kivy.android.PythonActivity').mActivity
+    except ImportError:
+        from com.chaquo.python import Python
+        context = Python.getPlatform().getApplication()
+    return context.getFilesDir().getPath() + '/data'
 
 def android_headers_dir():
-    if 'ANDROID_EXT_DIR' in os.environ:
-        d = android_ext_dir()
-    else:
+    try:
+        import jnius
         d = android_ext_dir() + '/org.electron.electron'
-    if not os.path.exists(d):
-        os.mkdir(d)
-    return d
-
-def android_check_data_dir():
-    """ if needed, move old directory to sandbox """
-    ext_dir = android_ext_dir()
-    data_dir = android_data_dir()
-    old_electrum_dir = ext_dir + '/electrum'
-    if not os.path.exists(data_dir) and os.path.exists(old_electrum_dir):
-        import shutil
-        new_headers_path = android_headers_dir() + '/blockchain_headers'
-        old_headers_path = old_electrum_dir + '/blockchain_headers'
-        if not os.path.exists(new_headers_path) and os.path.exists(old_headers_path):
-            print_error("Moving headers file to", new_headers_path)
-            shutil.move(old_headers_path, new_headers_path)
-        print_error("Moving data to", data_dir)
-        shutil.move(old_electrum_dir, data_dir)
-    return data_dir
+        if not os.path.exists(d):
+            os.mkdir(d)
+        return d
+    except ImportError:
+        return android_data_dir()
 
 def ensure_sparse_file(filename):
     if os.name == "nt":
@@ -381,7 +370,6 @@ def bh2u(x):
 def user_dir(prefer_local=False):
     if 'ANDROID_DATA' in os.environ:
         raise NotImplementedError('We do not support android yet')
-        return android_check_data_dir()
     elif os.name == 'posix' and "HOME" in os.environ:
         return os.path.join(os.environ["HOME"], ".openswap" )
     elif "APPDATA" in os.environ or "LOCALAPPDATA" in os.environ:
@@ -542,8 +530,11 @@ def timestamp_to_datetime(timestamp):
         return None
 
 def format_time(timestamp):
-    date = timestamp_to_datetime(timestamp)
-    return date.isoformat(' ')[:-3] if date else _("Unknown")
+    if timestamp:
+        date = timestamp_to_datetime(timestamp)
+        if date:
+            return date.isoformat(' ')[:-3]
+    return _("Unknown")
 
 
 # Takes a timestamp and returns a string with the approximation of the age
@@ -635,7 +626,7 @@ import ssl
 import time
 
 
-class SocketPipe:
+class SocketPipe(PrintError):
     def __init__(self, socket):
         self.socket = socket
         self.message = b''
@@ -663,11 +654,11 @@ class SocketPipe:
                 if err.errno == 60:
                     raise timeout
                 elif err.errno in [11, 35, 10035]:
-                    print_error("socket errno %d (resource temporarily unavailable)"% err.errno)
+                    self.print_error("socket errno %d (resource temporarily unavailable)"% err.errno)
                     time.sleep(0.2)
                     raise timeout
                 else:
-                    print_error("pipe: socket error", err)
+                    self.print_error("socket error:", err)
                     data = b''
             except:
                 traceback.print_exc(file=sys.stderr)
@@ -689,17 +680,8 @@ class SocketPipe:
 
     def _send(self, out):
         while out:
-            try:
-                sent = self.socket.send(out)
-                out = out[sent:]
-            except ssl.SSLError as e:
-                print_error("SSLError:", e)
-                time.sleep(0.1)
-                continue
-            except OSError as e:
-                print_error("OSError", e)
-                time.sleep(0.1)
-                continue
+            sent = self.socket.send(out)
+            out = out[sent:]
 
 
 def setup_thread_excepthook():

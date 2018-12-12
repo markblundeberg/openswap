@@ -178,6 +178,10 @@ class Abstract_Wallet(PrintError):
         frozen_addresses = storage.get('frozen_addresses',[])
         self.frozen_addresses = set(Address.from_string(addr)
                                     for addr in frozen_addresses)
+        # Frozen coins (UTXOs) -- note that we have 2 independent levels of "freezing": address-level and coin-level.
+        # The two types of freezing are flagged independently of each other and 'spendable' is defined as a coin that satisfies
+        # BOTH levels of freezing.
+        self.frozen_coins = set(storage.get('frozen_coins', []))
         # address -> list(txid, height)
         history = storage.get('addr_history',{})
         self._history = self.to_Address_dict(history)
@@ -470,7 +474,7 @@ class Abstract_Wallet(PrintError):
                 return height, conf, timestamp
             else:
                 height = self.unverified_tx[tx_hash]
-                return height, 0, False
+                return height, 0, 0
 
     def get_txpos(self, tx_hash):
         "return position, even if the tx is unverified"
@@ -623,6 +627,9 @@ class Abstract_Wallet(PrintError):
         coins, spent = self.get_addr_io(address)
         for txi in spent:
             coins.pop(txi)
+            if txi in self.frozen_coins:
+                # cleanup/detect if the 'frozen coin' was spent and remove it from the frozen coin set
+                self.frozen_coins.remove(txi)
         out = {}
         for txo, v in coins.items():
             tx_height, value, is_cb = v
@@ -633,7 +640,8 @@ class Abstract_Wallet(PrintError):
                 'prevout_n':int(prevout_n),
                 'prevout_hash':prevout_hash,
                 'height':tx_height,
-                'coinbase':is_cb
+                'coinbase':is_cb,
+                'is_frozen_coin':txo in self.frozen_coins
             }
             out[txo] = x
         return out
@@ -644,11 +652,14 @@ class Abstract_Wallet(PrintError):
         return sum([v for height, v, is_cb in received.values()])
 
     # return the balance of a bitcoin address: confirmed and matured, unconfirmed, unmatured
-    def get_addr_balance(self, address):
+    # Note that 'exclude_frozen_coins = True' only checks for coin-level freezing, not address-level.
+    def get_addr_balance(self, address, exclude_frozen_coins = False):
         assert isinstance(address, Address)
         received, sent = self.get_addr_io(address)
         c = u = x = 0
         for txo, (tx_height, v, is_cb) in received.items():
+            if exclude_frozen_coins and txo in self.frozen_coins:
+                continue
             if is_cb and tx_height + COINBASE_MATURITY > self.get_local_height():
                 x += v
             elif tx_height > 0:
@@ -669,6 +680,7 @@ class Abstract_Wallet(PrintError):
         return self.get_utxos(domain, exclude_frozen=True, mature=True, confirmed_only=confirmed_only)
 
     def get_utxos(self, domain = None, exclude_frozen = False, mature = False, confirmed_only = False):
+        ''' Note that exclude_frozen = True checks for BOTH address-level and coin-level frozen status. '''
         coins = []
         if domain is None:
             domain = self.get_addresses()
@@ -677,6 +689,8 @@ class Abstract_Wallet(PrintError):
         for addr in domain:
             utxos = self.get_addr_utxo(addr)
             for x in utxos.values():
+                if exclude_frozen and x['is_frozen_coin']:
+                    continue
                 if confirmed_only and x['height'] <= 0:
                     continue
                 if mature and x['coinbase'] and x['height'] + COINBASE_MATURITY > self.get_local_height():
@@ -692,14 +706,22 @@ class Abstract_Wallet(PrintError):
         return self.get_receiving_addresses() + self.get_change_addresses()
 
     def get_frozen_balance(self):
-        return self.get_balance(self.frozen_addresses)
+        if not self.frozen_coins:
+            # performance short-cut -- get the balance of the frozen address set only IFF we don't have any frozen coins
+            return self.get_balance(self.frozen_addresses)
+        # otherwise, do this more costly calculation...
+        cc_no_f, uu_no_f, xx_no_f = self.get_balance(None, exclude_frozen_coins = True, exclude_frozen_addresses = True)
+        cc_all, uu_all, xx_all = self.get_balance(None, exclude_frozen_coins = False, exclude_frozen_addresses = False)
+        return (cc_all-cc_no_f), (uu_all-uu_no_f), (xx_all-xx_no_f)
 
-    def get_balance(self, domain=None):
+    def get_balance(self, domain=None, exclude_frozen_coins=False, exclude_frozen_addresses=False):
         if domain is None:
             domain = self.get_addresses()
+        if exclude_frozen_addresses:
+            domain = set(domain) - self.frozen_addresses
         cc = uu = xx = 0
         for addr in domain:
-            c, u, x = self.get_addr_balance(addr)
+            c, u, x = self.get_addr_balance(addr, exclude_frozen_coins)
             cc += c
             uu += u
             xx += x
@@ -1030,11 +1052,26 @@ class Abstract_Wallet(PrintError):
         return tx
 
     def is_frozen(self, addr):
+        ''' Address-level frozen query. Note: this is set/unset independent of 'coin' level freezing. '''
         assert isinstance(addr, Address)
         return addr in self.frozen_addresses
 
+    def is_frozen_coin(self, utxo):
+        ''' 'coin' level frozen query. `utxo' is a prevout:n string, or a dict as returned from get_utxos().
+            Note: this is set/unset independent of 'address' level freezing. '''
+        assert isinstance(utxo, (str, dict))
+        if isinstance(utxo, dict):
+            ret = ("{}:{}".format(utxo['prevout_hash'], utxo['prevout_n'])) in self.frozen_coins
+            if ret != utxo['is_frozen_coin']:
+                self.print_error("*** WARNING: utxo has stale is_frozen_coin flag")
+                utxo['is_frozen_coin'] = ret # update stale flag
+            return ret
+        return utxo in self.frozen_coins
+
     def set_frozen_state(self, addrs, freeze):
-        '''Set frozen state of the addresses to FREEZE, True or False'''
+        ''' Set frozen state of the addresses to FREEZE, True or False
+            Note that address-level freezing is set/unset independent of coin-level freezing, however both must
+            be satisfied for a coin to be defined as spendable.. '''
         if all(self.is_mine(addr) for addr in addrs):
             if freeze:
                 self.frozen_addresses |= set(addrs)
@@ -1045,6 +1082,32 @@ class Abstract_Wallet(PrintError):
             self.storage.put('frozen_addresses', frozen_addresses)
             return True
         return False
+
+    def set_frozen_coin_state(self, utxos, freeze):
+        ''' Set frozen state of the COINS to FREEZE, True or False.
+            utxos is a (possibly mixed) list of either "prevout:n" strings and/or coin-dicts as returned from get_utxos().
+            Note that if passing prevout:n strings as input, 'is_mine()' status is not checked for the specified coin.
+            Also note that coin-level freezing is set/unset independent of address-level freezing, however both must
+            be satisfied for a coin to be defined as spendable. '''
+        ok = 0
+        for utxo in utxos:
+            if isinstance(utxo, str):
+                if freeze:
+                    self.frozen_coins |= { utxo }
+                else:
+                    self.frozen_coins -= { utxo }
+                ok += 1
+            elif isinstance(utxo, dict) and self.is_mine(utxo['address']):
+                txo = "{}:{}".format(utxo['prevout_hash'], utxo['prevout_n'])
+                if freeze:
+                    self.frozen_coins |= { txo }
+                else:
+                    self.frozen_coins -= { txo }
+                utxo['is_frozen_coin'] = bool(freeze)
+                ok += 1
+        if ok:
+            self.storage.put('frozen_coins', list(self.frozen_coins))
+        return ok
 
     def prepare_for_verifier(self):
         # review transactions that are in the history
@@ -1343,7 +1406,7 @@ class Abstract_Wallet(PrintError):
             status = PR_UNKNOWN
         return status, conf
 
-    def make_payment_request(self, addr, amount, message, expiration):
+    def make_payment_request(self, addr, amount, message, expiration=None):
         assert isinstance(addr, Address)
         timestamp = int(time.time())
         _id = bh2u(Hash(addr.to_storage_string() + "%d" % timestamp))[0:10]
@@ -1369,6 +1432,7 @@ class Abstract_Wallet(PrintError):
         requests = {addr.to_storage_string() : delete_address(value.copy())
                     for addr, value in self.receive_requests.items()}
         self.storage.put('payment_requests', requests)
+        self.storage.write()
 
     def sign_payment_request(self, key, alias, alias_addr, password):
         req = self.receive_requests.get(key)
@@ -1380,14 +1444,15 @@ class Abstract_Wallet(PrintError):
         self.receive_requests[key] = req
         self.save_payment_requests()
 
-    def add_payment_request(self, req, config):
+    def add_payment_request(self, req, config, set_address_label=True):
         addr = req['address']
         addr_text = addr.to_storage_string()
         amount = req['amount']
         message = req['memo']
         self.receive_requests[addr] = req
         self.save_payment_requests()
-        self.set_label(addr_text, message) # should be a default label
+        if set_address_label:
+            self.set_label(addr_text, message) # should be a default label
 
         rdir = config.get('requests_dir')
         if rdir and amount is not None:
@@ -1486,8 +1551,9 @@ class Simple_Wallet(Abstract_Wallet):
     def update_password(self, old_pw, new_pw, encrypt=False):
         if old_pw is None and self.has_password():
             raise InvalidPassword()
-        self.keystore.update_password(old_pw, new_pw)
-        self.save_keystore()
+        if self.keystore is not None:
+            self.keystore.update_password(old_pw, new_pw)
+            self.save_keystore()
         self.storage.set_password(new_pw, encrypt)
         self.storage.write()
 
@@ -1649,7 +1715,7 @@ class ImportedPrivkeyWallet(ImportedWalletBase):
         Abstract_Wallet.__init__(self, storage)
 
     @classmethod
-    def from_text(cls, storage, text, password):
+    def from_text(cls, storage, text, password=None):
         wallet = cls(storage)
         storage.put('use_encryption', bool(password))
         for privkey in text.split():

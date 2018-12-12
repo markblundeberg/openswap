@@ -17,6 +17,7 @@ from .custom_objc import *
 from .uikit_bindings import *
 from electroncash.networks import NetworkConstants
 from electroncash.address import Address, ScriptOutput
+from electroncash.paymentrequest import PaymentRequest
 from electroncash import bitcoin
 from .feeslider import FeeSlider
 from .amountedit import BTCAmountEdit
@@ -65,7 +66,7 @@ class SendVC(SendBase):
         self = ObjCInstance(send_super(__class__, self, 'init'))
         self.title = _("Send")
         self.qrScanErr = False
-        self.amountSats = None # None ok on this one       
+        self.amountSats = None # None ok on this one
         self.feeSats = None  # None ok on this one too
         self.isMax = False # should always be defined
         self.notEnoughFunds = False
@@ -79,9 +80,9 @@ class SendVC(SendBase):
         bb = UIBarButtonItem.new().autorelease()
         bb.title = _("Back")
         self.navigationItem.backBarButtonItem = bb
-                
+
         return self
-    
+
     @objc_method
     def dealloc(self) -> None:
         self.qrScanErr = None
@@ -98,12 +99,14 @@ class SendVC(SendBase):
         self.kbas = None
         self.queuedPayTo = None
         utils.nspy_pop(self)
+        for e in [self.amt, self.fiat, self.payTo]:
+            if e: utils.nspy_pop(e)
         send_super(__class__, self, 'dealloc')
 
     @objc_method
     def didRotateFromInterfaceOrientation_(self, o : int) -> None:
         pass
-    
+
     @objc_method
     def reader_didScanResult_(self, reader, result) -> None:
         utils.NSLog("Reader data = '%s'",str(result))
@@ -405,22 +408,36 @@ class SendVC(SendBase):
             self.queuedPayTo = [address, message, amount]
             return
         tf = self.payTo
+        pr = get_PR(self)
+        if pr:
+            # ignore passed-in values if using PRs
+            address = pr.get_requestor()
+            message = pr.get_memo()
+            amount = pr.get_amount()
         tf.text = str(address) if address is not None else tf.text
         tf.resignFirstResponder() # just in case
+        utils.uitf_redo_attrs(tf)
         # label
         self.descDel.text = str(message) if message is not None else ""
         self.desc.resignFirstResponder()
         # amount
         if amount == "!":
-            self.spendMax()
+            if pr:
+                # '!' max amount not supported for PRs!
+                amount = 0
+            else:
+                self.spendMax()
         tf = self.amt
         self.amountSats = int(amount) if type(amount) in [int,float] else self.amountSats
         tf.setAmount_(self.amountSats)
         tf.resignFirstResponder()
+        utils.uitf_redo_attrs(tf)
+        utils.uitf_redo_attrs(self.fiat)
+
         self.qrScanErr = False
         self.chkOk()
         utils.NSLog("OnPayTo %s %s %s",str(address), str(message), str(amount))
-    
+
     @objc_method
     def chkOk(self) -> bool:
         
@@ -440,7 +457,6 @@ class SendVC(SendBase):
         
         retVal = False
         errLbl = self.message
-        addrTf = self.payTo
         sendBut = self.sendBut
         previewBut = self.previewBut
         amountTf = self.amt
@@ -451,6 +467,8 @@ class SendVC(SendBase):
         previewBut.enabled = False
         errLbl.text = ""
         
+        addy = ''
+
         #c, u, x = wallet().get_balance()        
         #a = self.amountSats if self.amountSats is not None else 0
         #f = self.feeSats if self.feeSats is not None else 0
@@ -464,11 +482,12 @@ class SendVC(SendBase):
                 errLbl.text = _("Max fee exceeded")
                 raise Exception("ExcessiveFee")
             try:
-                if len(addrTf.text): Parser().parse_address(addrTf.text) # raises exception on parse error
+                addy = py_from_ns(self.getPayToAddress())
+                if len(addy): Parser().parse_address(addy) # raises exception on parse error
             except:
                 errLbl.text = _("Invalid Address")
                 raise Exception("InvalidAddress")
-            if self.amountSats is None or self.feeSats is None or not len(addrTf.text): # or self.feeSats <= 0:
+            if self.amountSats is None or self.feeSats is None or not len(addy): # or self.feeSats <= 0:
                 errLbl.text = ""
                 raise Exception("SilentException") # silent error when amount or fee isn't yet specified
             
@@ -496,12 +515,16 @@ class SendVC(SendBase):
         self.isMax = False
         self.notEnoughFunds = False
         self.excessiveFee = False
+        set_PR(self, None) # implicitly clears nspy_byname attr 'payment_request'
+        self.doChkPR()
         # address
         tf = self.payTo
         tf.text = ""
         # Amount
         tf = self.amt
         tf.setAmount_(None)
+        # Fiat
+        tf = self.fiat
         # label
         self.descDel.text = ""
         # slider
@@ -511,6 +534,7 @@ class SendVC(SendBase):
         # manual edit fee
         tf = self.feeTf
         tf.setAmount_(None)
+        tf.setFrozen_(False)
         # self.amountSats set below..
         self.amountSats = None
         self.feeSats = None
@@ -527,7 +551,47 @@ class SendVC(SendBase):
     def clear(self) -> None:
         self.clearAllExceptSpendFrom()
         self.clearSpendFrom()
-        
+
+    @objc_method
+    def doChkPR(self) -> None:
+        if not self.viewIfLoaded:
+            return
+        b = bool(self.isPR()) # ensure bool
+        for e in [self.payTo, self.amt, self.fiat]:
+            e.setFrozen_(b)
+            if b:
+                utils.nspy_put_byname(e, 10.0, 'indent_override')
+            else:
+                utils.nspy_pop_byname(e, 'indent_override')
+        for but in [self.maxBut, self.contactBut, self.qrBut]:
+            but.userInteractionEnabled = not b
+            but.alpha = 1.0 if not b else 0.3
+        if b:
+            self.isMax = False
+            self.payTo.text = get_PR(self).get_requestor()
+        else:
+            self.payTo.backgroundColor = utils.uicolor_custom('ultralight')
+            
+    @objc_method
+    def isPR(self) -> bool:
+        return get_PR(self) is not None
+
+    @objc_method
+    def getPayToAddress(self) -> ObjCInstance:
+        pr = get_PR(self)
+        if pr:
+            return ns_from_py(pr.get_address())
+        return ns_from_py(self.payTo.text)
+
+
+    @objc_method
+    def setPayToGreen(self) -> None:
+        self.payTo.backgroundColor = utils.uicolor_custom('green')
+
+    @objc_method
+    def setPayToExpired(self) -> None:
+        self.payTo.backgroundColor = utils.uicolor_custom('red')
+
     @objc_method
     def checkQRData_(self, text) -> None:
         self.qrScanErr = False
@@ -611,7 +675,10 @@ class SendVC(SendBase):
         # Enqueus a doUpdateFee() call for later -- this facility is provided for the fee slider so that it doesn't behave too slowly.
         def onTimer() -> None:
             self.timer = None
-            self.doUpdateFee()
+            # Note it is very unlikely but the timer can fire right after we kill the wallet instance
+            # due to the user losing auth (a long phone sleep does this). Hence this check here.
+            if wallet():
+                self.doUpdateFee()
         if self.timer: self.timer.invalidate()
         self.timer = utils.call_later(0.1,onTimer)
 
@@ -622,20 +689,20 @@ class SendVC(SendBase):
         '''
         fee_e = self.feeTf
         amount_e = self.amt
-        addr_e = self.payTo
+        payToAddr = py_from_ns(self.getPayToAddress())
         self.notEnoughFunds = False
         self.excessiveFee = False
        
         def get_outputs(is_max):
             outputs = []
-            if addr_e.text:
+            if payToAddr:
                 if is_max:
                     amount = '!'
                 else:
                     amount = amount_e.getAmount()
                 
                 try:
-                    _type, addr = Parser().parse_output(addr_e.text)
+                    _type, addr = Parser().parse_output(payToAddr)
                     outputs = [(_type, addr, amount)]
                 except Exception as e:
                     #print("Testing get_outputs Exception: %s"%str(e))
@@ -682,10 +749,12 @@ class SendVC(SendBase):
             if not freeze_fee:
                 fee = None if self.notEnoughFunds else tx.get_fee()
                 fee_e.setAmount_(fee)
+                utils.uitf_redo_attrs(fee_e)
 
             if self.isMax:
                 amount = tx.output_value()
                 amount_e.setAmount_(amount)
+                utils.uitf_redo_attrs(amount_e)
         self.chkOk()
 
     @objc_method
@@ -943,11 +1012,8 @@ def get_coins(sendvc : ObjCInstance) -> list:
     return wallet().get_spendable_coins(None, config())
            
 def read_send_form(send : ObjCInstance) -> tuple:
-    #if self.payment_request and self.payment_request.has_expired():
-    #    parent().show_error(_('Payment request has expired'))
-    #    return
     label = send.descDel.text
-    addr_e = send.payTo
+    addr = py_from_ns(send.getPayToAddress())
     fee_e = send.feeTf
     outputs = []
 
@@ -962,7 +1028,7 @@ def read_send_form(send : ObjCInstance) -> tuple:
             pass
         amt_e = send.amt
         try:
-            typ, addr = Parser().parse_output(addr_e.text)
+            typ, addr = Parser().parse_output(addr)
         except:
             utils.show_alert(send, _("Error"), _("Invalid Address"))
             return None
@@ -990,6 +1056,20 @@ def read_send_form(send : ObjCInstance) -> tuple:
     coins = get_coins(send)
     return outputs, fee, label, coins
 
+def get_PR(sendVC):
+    if sendVC:
+        pr = utils.nspy_get_byname(sendVC, 'payment_request')
+        if isinstance(pr, PaymentRequest):
+            return pr
+    return None
+
+def set_PR(sendVC, pr):
+    if sendVC:
+        if isinstance(pr, PaymentRequest):
+            utils.nspy_put_byname(sendVC, pr, 'payment_request')
+        else:
+            # Passed None to clear
+            utils.nspy_pop_byname(sendVC, 'payment_request')
 
 class Parser:
     def parse_address_and_amount(self, line):

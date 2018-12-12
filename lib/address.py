@@ -248,7 +248,7 @@ class ScriptOutput(namedtuple("ScriptAddressTuple", "script")):
                 script.extend(Script.push_data(binascii.unhexlify(word)))
         return ScriptOutput(bytes(script))
 
-    def to_ui_string(self,):
+    def to_ui_string(self,ignored=None):
         '''Convert to user-readable OP-codes (plus pushdata as text if possible)
         eg OP_RETURN (12) "Hello there!"
         '''
@@ -335,17 +335,24 @@ class Address(namedtuple("AddressTuple", "hash160 kind")):
                                .format(addr_prefix))
         if kind == cashaddr.PUBKEY_TYPE:
             return cls(addr_hash, cls.ADDR_P2PKH)
-        else:
-            assert kind == cashaddr.SCRIPT_TYPE
+        elif kind == cashaddr.SCRIPT_TYPE:
             return cls(addr_hash, cls.ADDR_P2SH)
+        else:
+            raise AddressError('address has unexpected kind {}'.format(kind))
 
     @classmethod
     def from_string(cls, string):
         '''Construct from an address string.'''
         if len(string) > 35:
-            return cls.from_cashaddr_string(string)
+            try:
+                return cls.from_cashaddr_string(string)
+            except ValueError as e:
+                raise AddressError(str(e))
 
-        raw = Base58.decode_check(string)
+        try:
+            raw = Base58.decode_check(string)
+        except Base58Error as e:
+            raise AddressError(str(e))
 
         # Require version byte(s) plus hash160.
         if len(raw) != 21:

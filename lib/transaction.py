@@ -616,7 +616,6 @@ class Transaction:
                         j = pubkeys.index(pubkey)
                         print_error("adding sig", i, j, pubkey, sig)
                         self._inputs[i]['signatures'][j] = sig
-                        #self._inputs[i]['x_pubkeys'][j] = pubkey
                         break
         # redo raw
         self.serialize()
@@ -866,13 +865,14 @@ class Transaction:
     @profiler
     def estimated_size(self):
         '''Return an estimated tx size in bytes.'''
-        return len(self.serialize(True)) / 2 if not self.is_complete() or self.raw is None else len(self.raw) / 2 # ASCII hex string
+        return (len(self.serialize(True)) // 2 if not self.is_complete() or self.raw is None
+                else len(self.raw) // 2)  # ASCII hex string
 
     @classmethod
     def estimated_input_size(self, txin):
         '''Return an estimated of serialized input size in bytes.'''
         script = self.input_script(txin, True)
-        return len(self.serialize_input(txin, script, True)) / 2
+        return len(self.serialize_input(txin, script, True)) // 2  # ASCII hex string
 
     def signature_count(self):
         r = 0
@@ -911,7 +911,6 @@ class Transaction:
                     sig = private_key.sign_digest_deterministic(pre_hash, hashfunc=hashlib.sha256, sigencode = ecdsa.util.sigencode_der)
                     assert public_key.verify_digest(sig, pre_hash, sigdecode=ecdsa.util.sigdecode_der)
                     txin['signatures'][j] = bh2u(sig) + int_to_hex(self.nHashType() & 255, 1)
-                    txin['x_pubkeys'][j] = pubkey
                     txin['pubkeys'][j] = pubkey # needed for fd keys
                     self._inputs[i] = txin
         print_error("is_complete", self.is_complete())

@@ -8,6 +8,7 @@ from . import utils
 from . import gui
 from electroncash.i18n import _, language
 from electroncash.mnemonic import Mnemonic
+from electroncash.old_mnemonic import words as old_words
 from typing import Any
 from .uikit_bindings import *
 from .custom_objc import *
@@ -16,6 +17,22 @@ from collections import namedtuple
 import electroncash.bitcoin as bitcoin
 import electroncash.keystore as keystore
 from electroncash.address import Address, PublicKey
+
+if False:
+    # this is here for translate i18n to pick up these strings
+    __DUMMY_FOR_TRANSLATION = (
+        _("My Wallet"), _("Tap to enter a password"), _("Enter the same password again"),
+        _("Wallet Password"), _("Confirm Wallet Password"),
+        _("Please write your seed phrase down, as it's the only way to recover your funds if you forget your password or your device is stolen."),
+        _("Reenter your seed phrase"),
+        # On-Boarding text...
+        _("Welcome to"), _("Electron Cash is an SPV wallet for Bitcoin Cash"),
+        _("Control your own private keys"), _("Easily back up your wallet with a mnemonic seed phrase."),
+        _("Enjoy high security"), _("without downloading the blockchain or running a full node."),
+        _("Get Started"),
+        _("Cancel"), _("Seed"), _("Next"), _("Back"),
+        _("Import"), _("Master Key"), _("Save Wallet"),
+    )
 
 
 #################################################################################################
@@ -56,6 +73,17 @@ class NewWalletNav(NewWalletNavBase):
         utils.nspy_pop(self)
         send_super(__class__, self, 'dealloc')
 
+    @objc_method
+    def pushViewController_animated_(self, vc : ObjCInstance, animated : bool) -> None:
+        ''' This is here as a cheap hack to translate the top nav buttons to the native language '''
+        send_super(__class__, self, 'pushViewController:animated:', vc.ptr, animated, argtypes=[objc_id, c_bool])
+        if vc.navigationItem:
+            if vc.navigationItem.backBarButtonItem:
+                vc.navigationItem.backBarButtonItem.title = _(vc.navigationItem.backBarButtonItem.title or "Back")
+            if vc.navigationItem.leftBarButtonItem:
+                vc.navigationItem.leftBarButtonItem.title = _(vc.navigationItem.leftBarButtonItem.title or "Cancel")
+
+
 class NewWalletVC(NewWalletVCBase):
     origPlaceholders = objc_property()
     origLabelTxts = objc_property()
@@ -87,14 +115,14 @@ class NewWalletVC(NewWalletVCBase):
             self.touchId.setHidden_(True)
             self.touchId.setOn_animated_(False, False)
 
-        
+
     @objc_method
     def setupNextButtonSmartLayoutMogrificationWhenKeyboardIsShown(self) -> None:
         origButConstant = self.nextButBotCS.constant
         origHConstant = self.errHeightCS.constant
         origErrTopConstant = self.errTopCS.constant
         self.origPS = self.errMsg.attributedText.attribute_atIndex_effectiveRange_(NSParagraphStyleAttributeName, 0, None)
-        
+
         def slideUpButton(rect : CGRect) -> None:
             # slide the 'next' button up so it's above the keyboard when the keyboard is shown
             self.nextButBotCS.constant = 5 + rect.size.height
@@ -113,7 +141,7 @@ class NewWalletVC(NewWalletVCBase):
                 ps.minimumLineHeight = 17.0
                 ats.removeAttribute_range_(NSParagraphStyleAttributeName, NSRange(0, ats.length()))
                 ats.addAttribute_value_range_(NSParagraphStyleAttributeName, ps, NSRange(0, ats.length()))
-                self.errMsg.attributedText = ats            
+                self.errMsg.attributedText = ats
             self.view.layoutIfNeeded()
         def slideDownButton() -> None:
             # when keyboard hides, undo the damage done above
@@ -126,19 +154,24 @@ class NewWalletVC(NewWalletVCBase):
                 ats.addAttribute_value_range_(NSParagraphStyleAttributeName, self.origPS, NSRange(0, ats.length()))
                 self.errMsg.attributedText = ats
             self.view.layoutIfNeeded()
-        
+
         # NB: this cleans itself up automatically due to objc associated object magic on self.view's deallocation
         utils.register_keyboard_callbacks(self.view, onWillShow=slideUpButton, onWillHide=slideDownButton)
 
     @objc_method
     def translateUI(self) -> None:
+        self.title = _("Standard Wallet")
+
+        for state in UIControlState_ALL_RELEVANT_TUPLE:
+            self.nextBut.setTitle_forState_(_("Next"), state)
+
         lbls = [ self.walletNameTit, self.walletPw1Tit, self.walletPw2Tit, self.touchIdTit ]
         if not self.origLabelTxts:
             self.origLabelTxts = { lbl.ptr.value : lbl.text for lbl in lbls }
         d = self.origLabelTxts
         for lbl in lbls:
             lbl.setText_withKerning_(_(d[lbl.ptr.value]), utils._kern)
-                
+
         tfs = [ self.walletName, self.walletPw1, self.walletPw2 ]
         if not self.origPlaceholders:
             self.origPlaceholders = { tf.ptr.value : tf.placeholder for tf in tfs }
@@ -149,7 +182,7 @@ class NewWalletVC(NewWalletVCBase):
         if self.showHidePWBut:
             self.showHidePWBut.setTitle_forState_(" " + _("Show"), UIControlStateNormal)
             self.showHidePWBut.setTitle_forState_(" " + _("Show"), UIControlStateSelected)
-    
+
     @objc_method
     def viewWillAppear_(self, animated : bool) -> None:
         send_super(__class__, self, 'viewWillAppear:', animated, argtypes=[c_bool])
@@ -160,12 +193,12 @@ class NewWalletVC(NewWalletVCBase):
         send_super(__class__, self, 'viewWillDisappear:', animated, argtypes=[c_bool])
         self.view.endEditing_(True)
 
-    
+
     @objc_method
     def textFieldShouldReturn_(self, tf) -> bool:
         tf.resignFirstResponder()
         return True
-    
+
     @objc_method
     def textField_shouldChangeCharactersInRange_replacementString_(self, tf, r : NSRange, s : ObjCInstance) -> bool:
         if not self.errMsgView.isHidden():
@@ -173,7 +206,7 @@ class NewWalletVC(NewWalletVCBase):
             self.errMsgView.setHidden_(True)
             self.touchIdView.setHidden_(not self.errMsgView.isHidden())
         return True
-    
+
     @objc_method
     def textFieldDidEndEditing_(self, tf : ObjCInstance) -> None:
         if tf.ptr == self.walletName.ptr:
@@ -183,14 +216,14 @@ class NewWalletVC(NewWalletVCBase):
     @objc_method
     def textFieldDidBeginEditing_(self, tf : ObjCInstance) -> None:
         pass
-    
+
     @objc_method
     def toggleShowHidePW(self) -> None:
         sel = not self.showHidePWBut.isSelected()
         self.showHidePWBut.setSelected_(sel)
         self.walletPw1.setSecureTextEntry_(not sel)
         self.walletPw2.setSecureTextEntry_(not sel)
-    
+
     @objc_method
     def doChkFormOk(self) -> bool:
         self.walletName.text = utils.pathsafeify(self.walletName.text)
@@ -214,7 +247,7 @@ class NewWalletVC(NewWalletVCBase):
     def shouldPerformSegueWithIdentifier_sender_(self, identifier, sender) -> bool:
         # check passwords match, wallet name is unique
         return self.doChkFormOk()
-        
+
     @objc_method
     def saveVars(self) -> None:
         _SetParam(self, 'WalletName', self.walletName.text)
@@ -225,7 +258,16 @@ class NewWalletVC(NewWalletVCBase):
     def prepareForSegue_sender_(self, segue, sender) -> None:
         # pass along wallet name, password, etc..
         self.saveVars()
-        
+
+class NewWalletVCAtEnd(NewWalletVC):
+    @objc_method
+    def translateUI(self) -> None:
+        send_super(__class__, self, 'translateUI')
+        self.title = _("Save Wallet")
+        for state in UIControlState_ALL_RELEVANT_TUPLE:
+            self.nextBut.setTitle_forState_(_("Save"), state)
+
+
 class NewWalletSeed1(NewWalletSeedBase):
     origLabelTxts = objc_property()
     seed = objc_property()
@@ -241,9 +283,12 @@ class NewWalletSeed1(NewWalletSeedBase):
     def viewDidLoad(self) -> None:
         send_super(__class__, self, 'viewDidLoad')
         utils.uilabel_replace_attributed_text(self.seedtv, " ", font = UIFont.systemFontOfSize_weight_(16.0, UIFontWeightBold))
-        
+
     @objc_method
     def translateUI(self) -> None:
+        self.title = _("Seed")
+        for state in UIControlState_ALL_RELEVANT_TUPLE:
+            self.nextBut.setTitle_forState_(_("Next"), state)
         lbls = [ self.seedTit, self.info ]
         if not self.origLabelTxts:
             self.origLabelTxts = { lbl.ptr.value : lbl.text for lbl in lbls }
@@ -253,7 +298,7 @@ class NewWalletSeed1(NewWalletSeedBase):
                 utils.uilabel_replace_attributed_text(lbl, _(d[lbl.ptr.value]), font=UIFont.italicSystemFontOfSize_(14.0))
             else:
                 lbl.setText_withKerning_(_(d[lbl.ptr.value]), utils._kern)
-   
+
     @objc_method
     def viewWillAppear_(self, animated : bool) -> None:
         send_super(__class__, self, 'viewWillAppear:', animated, argtypes=[c_bool])
@@ -274,17 +319,17 @@ class NewWalletSeed1(NewWalletSeedBase):
             def OnSuccess(result : str) -> None:
                 self.infoView.setHidden_(False)
                 self.seed = result
-                utils.uilabel_replace_attributed_text(self.seedtv, self.seed)        
+                utils.uilabel_replace_attributed_text(self.seedtv, self.seed)
             utils.WaitingDialog(self, _("Generating seed..."), GenSeed,  OnSuccess, OnError)
         else:
             self.infoView.setHidden_(False)
             utils.uilabel_replace_attributed_text(self.seedtv, self.seed)
-    
+
     @objc_method
     def shouldPerformSegueWithIdentifier_sender_(self, identifier, sender) -> bool:
         return bool(self.seed)
-        
-    
+
+
     @objc_method
     def prepareForSegue_sender_(self, segue, sender) -> None:
         # pass along wallet seed
@@ -338,9 +383,12 @@ class NewWalletSeed2(NewWalletSeedBase):
 
         else:
             utils.NSLog("ERROR: NewWalletSeed2 cannot find the KeyboardVC! FIXME!")
-              
+
     @objc_method
     def translateUI(self) -> None:
+        self.title = _("Seed Entry")
+        for state in UIControlState_ALL_RELEVANT_TUPLE:
+            self.nextBut.setTitle_forState_(_("Next"), state)
         lbls = [ self.seedTit, self.info ]
         if self.seedExtTit: lbls.append(self.seedExtTit)
         if self.bip39Tit: lbls.append(self.bip39Tit)
@@ -356,20 +404,20 @@ class NewWalletSeed2(NewWalletSeedBase):
                 utils.uilabel_replace_attributed_text(lbl, txt, font=UIFont.italicSystemFontOfSize_(14.0))
             else:
                 lbl.setText_withKerning_(_(d[lbl.ptr.value]), utils._kern)
-   
+
     @objc_method
     def viewWillAppear_(self, animated : bool) -> None:
         send_super(__class__, self, 'viewWillAppear:', animated, argtypes=[c_bool])
         self.translateUI()
         if not self.bip39 or not self.bip39.isOn():
             self.doSuggestions()
- 
+
     @objc_method
     def viewDidAppear_(self, animated : bool) -> None:
         send_super(__class__, self, 'viewDidAppear:', animated, argtypes=[c_bool])
         if not self.bip39 or not self.bip39.isOn():
             self.seedtv.becomeFirstResponder()
- 
+
     @objc_method
     def clearSugButs(self) -> None:
         # next, do suggestion buttons
@@ -377,21 +425,21 @@ class NewWalletSeed2(NewWalletSeedBase):
         for but in sugButs:
             but.removeFromSuperview()
         self.sugButs = list()
-        
- 
+
+
     @objc_method
     def doSuggestions(self) -> None:
         t = str(self.seedtv.text).lower()
         prefix = ''
         words = t.split()
-        wordNum = len(words)  
+        wordNum = len(words)
         if t and t[-1] != ' ':
             wordNum = wordNum - 1
             prefix = words[-1]
-        
-        suggestions = list(_Mnem().get_suggestions(prefix))
+
+        suggestions = list(set(_Mnem().get_suggestions(prefix)) | _GetOldSuggestions(prefix))
         #print("wordnum=",wordNum,"prefix=","'"+prefix+"'","suggestions:",*suggestions)
-        
+
         self.kvc.disableAllKeys()
         self.kvc.setKey_enabled_(self.kvc.backspace, True)
         validchars = set()
@@ -401,12 +449,12 @@ class NewWalletSeed2(NewWalletSeedBase):
                 validchars.add(sug[l].upper())
         for c in validchars:
             self.kvc.setKey_enabled_(c, True)
-            
+
         # next, do suggestion buttons
         self.clearSugButs()
         sugButs = list()
         self.sugButs = list()
-        
+
         currActualSeedWord = ''
         if not self.restoreMode:
             try:
@@ -414,16 +462,16 @@ class NewWalletSeed2(NewWalletSeedBase):
             except:
                 utils.NSLog("Error with seed word: %s",sys.exc_info()[1])
                 currActualSeedWord = 'TOO MANY WORDS!' # this makes sure we continue even though they have too many words.
-        
+
         #print("currActualSeedWord=",currActualSeedWord)
-        
+
         if len(suggestions) < 10:
             import random
             sugSet = set()
             if currActualSeedWord in suggestions:
                 sugSet.add(currActualSeedWord)
             elif prefix in suggestions: # this fixes issue #4
-                sugSet.add(prefix) 
+                sugSet.add(prefix)
             while len(sugSet) < len(suggestions) and len(sugSet) < 4:
                 sugSet.add(suggestions[random.randint(0,len(suggestions)-1)])
             #print("sugSet=",*sugSet if sugSet else '')
@@ -438,7 +486,7 @@ class NewWalletSeed2(NewWalletSeedBase):
                     self.doSuggestions()
                 but = SuggestionButton.suggestionButtonWithText_handler_(sug, AddButWord)
                 sugButs.append(but)
-                
+
             # lay out buttons
             nButs = len(sugButs)
             if nButs:
@@ -449,7 +497,7 @@ class NewWalletSeed2(NewWalletSeedBase):
                 insetWidth = fw - marg*2.0
                 totalPad = pad * (nButs-1)
                 w = min( (insetWidth - totalPad)/nButs, 200.0 )
-                posX = (fw - (w*nButs + totalPad))/2.0 
+                posX = (fw - (w*nButs + totalPad))/2.0
                 for but in sugButs:
                     f = but.frame
                     f.size.width = w
@@ -460,7 +508,7 @@ class NewWalletSeed2(NewWalletSeedBase):
                     self.view.addSubview_(but)
 
         self.sugButs = sugButs
-        
+
         self.errMsgView.setHidden_(True)
         self.infoView.setHidden_(False)
 
@@ -474,12 +522,12 @@ class NewWalletSeed2(NewWalletSeedBase):
         if list(self.sugButs):
             self.retain()
             utils.call_later(0.400, layoutButtons)
-    
+
     @objc_method
     def shouldPerformSegueWithIdentifier_sender_(self, identifier, sender) -> bool:
         if identifier in ('EMBEDDED_KVC'): return True
         return False
-        
+
     @objc_method
     def onNext(self) -> None:
         ''' only calld from IB connections if not in restoreMode! '''
@@ -487,14 +535,14 @@ class NewWalletSeed2(NewWalletSeedBase):
         if self.isDone:
             _DoDismiss(vc=self)
             return
-        
+
         if list(self.seedList) != self.seedtv.text.strip().lower().split():
             err = _('The seed you entered does not match the generated seed. Go back to the previous screen and double-check it, then try again.')
             utils.uilabel_replace_attributed_text(self.errMsg, err, font=UIFont.italicSystemFontOfSize_(14.0))
             self.errMsgView.setHidden_(False)
             self.infoView.setHidden_(True)
             return
-        
+
         try:
             wallet_name = _Params(self)['WalletName']
             wallet_pass = _Params(self)['WalletPass']
@@ -507,22 +555,22 @@ class NewWalletSeed2(NewWalletSeedBase):
 
         def Completion() -> None:
             self.isDone = True
-            
+
         _WizardGenerateNewWallet(
             vc = self, completion = Completion,
             wallet_name = wallet_name,
             wallet_pass = wallet_pass,
             wallet_seed = wallet_seed,
             wants_touchid = wants_touchid)
- 
-    
+
+
     def prepareForSegue_sender_(self, segue, sender) -> None:
         #print("params=",_Params(self))
         pass
 
 class RestoreWallet1(NewWalletSeed2):
     tvdel = objc_property()
-    
+
     @objc_method
     def dealloc(self) -> None:
         self.tvdel = None
@@ -532,7 +580,7 @@ class RestoreWallet1(NewWalletSeed2):
     def viewDidLoad(self) -> None:
         self.restoreMode = True
         self.seedTit.text = _('Enter your seed phrase') # override the text title to be appropriate to this screen
-                
+
         def onBip39(b : objc_id) -> None:
             sw = ObjCInstance(b)
             if not sw.isOn():
@@ -565,7 +613,7 @@ class RestoreWallet1(NewWalletSeed2):
         if self.kvc:
             self.kvc.blockPasting = False
             self.kvc.blockSelecting = False
-    
+
     @objc_method
     def textFieldDidBeginEditing_(self, tf) -> None:
         if tf.ptr.value == self.seedExt.ptr.value:
@@ -583,7 +631,7 @@ class RestoreWallet1(NewWalletSeed2):
                 utils.call_later(0.2, lambda:self.seedtv.becomeFirstResponder())
             return True
         return False
-       
+
     @objc_method
     def onNext(self) -> None:
         seed = ' '.join(self.seedtv.text.strip().split())
@@ -599,7 +647,7 @@ class RestoreWallet1(NewWalletSeed2):
 
         seedext = self.seedExt.text.strip() if self.seedExt.text else ''
         seed_type = 'bip39' if is_bip39 else bitcoin.seed_type(seed)
-        
+
         def PushIt() -> None:
             _SetParam(self, 'seed', seed)
             _SetParam(self, 'seedext', seedext)
@@ -610,11 +658,11 @@ class RestoreWallet1(NewWalletSeed2):
             sb = UIStoryboard.storyboardWithName_bundle_("NewWallet", None)
             vc = sb.instantiateViewControllerWithIdentifier_("RESTORE_SEED_2")
             self.navigationController.pushViewController_animated_(vc, True)
-            
+
         def ToErrIsHuman(title = "Oops!", message = "Something went wrong! Please email the developers!", onOk = None) -> None:
             gui.ElectrumGui.gui.show_error(vc = self, title = title, message = message, onOk = onOk)
 
-        
+
         if seed_type == 'bip39':
             # do bip39 stuff
             default_derivation = keystore.bip44_derivation_145(0)
@@ -664,7 +712,7 @@ class RestoreWallet1(NewWalletSeed2):
         except:
             utils.NSLog("Exception in doBip44Keystore: %s",sys.exc_info()[1])
         return False
-    
+
     @objc_method
     def doStandardKeystore(self, seed, passphrase) -> bool:
         seed, passphrase = py_from_ns(seed), py_from_ns(passphrase)
@@ -687,8 +735,8 @@ def _AddKeystore(vc, k) -> bool:
     _SetParam(vc, 'keystores', keystores)
     return True
 
-class RestoreWallet2(NewWalletVC):
-    
+class RestoreWallet2(NewWalletVCAtEnd):
+
     @objc_method
     def onRestoreModeSave(self) -> None:
         self.view.endEditing_(True)
@@ -709,7 +757,7 @@ class RestoreWallet2(NewWalletVC):
             except:
                 utils.NSLog("onRestoreModeSave, got exception: %s", str(sys.exc_info()[1]))
                 return
-                            
+
             _WizardGenerateNewWallet(
                 vc = self,
                 wallet_name = wallet_name,
@@ -724,16 +772,21 @@ class RestoreWallet2(NewWalletVC):
 class NewWalletMenu(NewWalletMenuBase):
     lineHider = objc_property()
     noCancelBut = objc_property()
-    
+
     @objc_method
     def dealloc(self) -> None:
         self.lineHider = None
         self.noCancelBut = None
         send_super(__class__, self, 'dealloc')
-        
+
     @objc_method
     def viewDidLoad(self) -> None:
         send_super(__class__, self, 'viewDidLoad')
+        if self.navigationItem:
+            if self.navigationItem.leftBarButtonItem:
+                self.navigationItem.leftBarButtonItem.title = _(self.navigationItem.leftBarButtonItem.title)
+            if self.navigationItem.backBarButtonItem:
+                self.navigationItem.backBarButtonItem.title = _(self.navigationItem.backBarButtonItem.title)
 
     @objc_method
     def viewWillAppear_(self, animated : bool) -> None:
@@ -752,6 +805,16 @@ class NewWalletMenu(NewWalletMenuBase):
             self.lineHider.backgroundColor = navBar.barTintColor
             self.lineHider.autoresizingMask = (1<<6)-1
             navBar.addSubview_(self.lineHider)
+        # translate UI
+        self.navigationItem.title = _("New Wallet")
+        utils.uilabel_replace_attributed_text(lbl = self.blurb,
+                                              text = _("You can have as many wallets as you like! Choose from one of the options below:"),
+                                              template = self.blurb.attributedText)
+        for state in UIControlState_ALL_RELEVANT_TUPLE:
+            self.std.setTitle_forState_(_("Create New Standard Wallet"), state)
+            self.restore.setTitle_forState_(_("Restore from Seed"), state)
+            self.imp.setTitle_forState_(_("Import Addresses or Private Keys"), state)
+            self.master.setTitle_forState_(_("Use a Master Key"), state)
 
     @objc_method
     def viewWillDisappear_(self, animated : bool) -> None:
@@ -759,12 +822,14 @@ class NewWalletMenu(NewWalletMenuBase):
         if self.lineHider:
             self.lineHider.removeFromSuperview()
             self.lineHider = None
-    
+
 class Import1(Import1Base):
- 
+
     @objc_method
     def viewDidLoad(self) -> None:
         send_super(__class__, self, 'viewDidLoad')
+        for state in UIControlState_ALL_RELEVANT_TUPLE:
+            self.nextBut.setTitle_forState_(_("Next"), state)
         self.tvDel.placeholderText = _("Tap to add text...")
         self.tvDel.placeholderFont = UIFont.italicSystemFontOfSize_(14.0)
         self.tvDel.font = UIFont.systemFontOfSize_weight_(14.0, UIFontWeightMedium)
@@ -777,12 +842,14 @@ class Import1(Import1Base):
                 self.infoView.setHidden_(False)
         self.tvDel.didChange = Block(hideErrBox)
         if self.masterKeyMode:
+            self.title = _("Master Key")
             titText = _("Create a wallet using a Master Key")
-            infoText =  (_("Specify a master key to re-create a deterministic wallet.") 
+            infoText =  (_("Specify a master key to re-create a deterministic wallet.")
                          + " " + _("To create a watching-only wallet, please enter your master public key (xpub/ypub/zpub).")
                          + " " + _("To create a spending wallet, please enter a master private key (xprv/yprv/zprv).") )
 
         else:
+            self.title = _("Import")
             titText = _("Import Bitcoin Cash Addresses or Private Keys")
             infoText = _("Enter a list of private keys to create a regular spending wallet. " +
                          "Alternatively, you can create a 'watching-only' wallet by " +
@@ -793,11 +860,11 @@ class Import1(Import1Base):
         utils.uilabel_replace_attributed_text(lbl=self.errMsg, font = UIFont.italicSystemFontOfSize_(14.0), text = " ")
 
         self.setupNextButtonSmartLayoutMogrificationWhenKeyboardIsShown()
-        
+
     @objc_method
     def setupNextButtonSmartLayoutMogrificationWhenKeyboardIsShown(self) -> None:
         origButConstant = self.nextButBotCS.constant
-        
+
         def slideUpButton(rect : CGRect) -> None:
             # slide the 'next' button up so it's above the keyboard when the keyboard is shown
             self.nextButBotCS.constant = origButConstant + rect.size.height
@@ -806,7 +873,7 @@ class Import1(Import1Base):
             # when keyboard hides, undo the damage done above
             self.nextButBotCS.constant = origButConstant
             self.view.layoutIfNeeded()
-        
+
         # NB: this cleans itself up automatically due to objc associated object magic on self.view's deallocation
         utils.register_keyboard_callbacks(self.view, onWillShow=slideUpButton, onWillHide=slideDownButton)
 
@@ -822,7 +889,7 @@ class Import1(Import1Base):
             self.qrvc.modalPresentationStyle = UIModalPresentationFormSheet
             self.qrvc.delegate = self
             self.presentViewController_animated_completion_(self.qrvc, True, None)
-        
+
     @objc_method
     def reader_didScanResult_(self, reader, result) -> None:
         utils.NSLog("Reader data = '%s'",str(result))
@@ -834,18 +901,18 @@ class Import1(Import1Base):
         else:
             self.tvDel.text = result.strip() # overwrite in this mode
         self.readerDidCancel_(reader) # just close it once we get data
-             
+
     @objc_method
     def readerDidCancel_(self, reader) -> None:
         if reader is not None: reader.stopScanning()
         self.dismissViewControllerAnimated_completion_(True, None)
         self.qr = None
         self.qrvc = None
-   
+
     @objc_method
     def words(self) -> ObjCInstance:
         return ns_from_py(str(self.tvDel.text).split())
-   
+
     @objc_method
     def doChkFormOk(self) -> bool:
         def ErrMsg(msg):
@@ -855,7 +922,7 @@ class Import1(Import1Base):
         def ClearErrMsg():
             self.infoView.setHidden_(False)
             self.errMsgView.setHidden_(True)
-            
+
         words = py_from_ns(self.words())
         if self.masterKeyMode:
             if len(words) > 1:
@@ -873,14 +940,14 @@ class Import1(Import1Base):
                     ClearErrMsg()
                     return True
             ErrMsg( _("You appear to have entered no valid Bitcoin Cash addresses or private keys.") )
-        return False        
-   
+        return False
+
     @objc_method
     def shouldPerformSegueWithIdentifier_sender_(self, identifier, sender) -> bool:
         # checks here that form is ok, etc
         self.view.endEditing_(True)
         return self.doChkFormOk()
-    
+
     @objc_method
     def prepareForSegue_sender_(self, segue, sender) -> None:
         words = py_from_ns(self.words())
@@ -889,16 +956,20 @@ class Import1(Import1Base):
             _SetParam(self, 'keystore', k)
         else:
             _SetParam(self, 'words', words)
-        
+
 class Import2(Import2Base):
     @objc_method
     def dealloc(self) -> None:
         utils.nspy_pop(self)
         send_super(__class__, self, 'dealloc')
-        
+
     @objc_method
     def viewDidLoad(self) -> None:
         send_super(__class__, self, 'viewDidLoad')
+        if self.title:
+            self.title = _(self.title)
+        for state in UIControlState_ALL_RELEVANT_TUPLE:
+            self.nextBut.setTitle_forState_(_("Import"), state)
         utils.uilabel_replace_attributed_text(lbl=self.info, font = UIFont.italicSystemFontOfSize_(14.0),
                                               text = _("..."))
         utils.uilabel_replace_attributed_text(lbl=self.errMsg, font = UIFont.italicSystemFontOfSize_(14.0), text = "...")
@@ -910,10 +981,10 @@ class Import2(Import2Base):
             self.items = list()
         else:
             self.items = _Params(self).get('words', list())
-        
+
         uinib = UINib.nibWithNibName_bundle_("ImportCell", None)
         self.tv.registerNib_forCellReuseIdentifier_(uinib, "ImportCell")
-        
+
         ## Bar button item is optional in future but so far in the views we're using it's always there
         bb = self.navigationItem.rightBarButtonItem
         if bb:
@@ -924,12 +995,12 @@ class Import2(Import2Base):
             d[NSFontAttributeName] = UIFont.systemFontOfSize_weight_(14.0, UIFontWeightRegular)
             bb.setTitleTextAttributes_forState_(d, UIControlStateHighlighted)
             bb.title = _GetBBTitle()
- 
+
     @objc_method
     def viewWillAppear_(self, animated : bool) -> None:
         send_super(__class__, self, 'viewWillAppear:', animated, argtypes = [c_bool])
         self.refresh()
-        
+
     @objc_method
     def viewDidAppear_(self, animated : bool) -> None:
         send_super(__class__, self, 'viewDidAppear:', animated, argtypes = [c_bool])
@@ -953,7 +1024,7 @@ class Import2(Import2Base):
                 self.items = l
                 self.refresh()
             utils.WaitingDialog(vc = self, message = _("Deriving addresses..."), task=Get20Addys, on_success=Success, on_error=Err)
-     
+
     @objc_method
     def toggleAddressFormat(self) -> None:
         bb = self.navigationItem.rightBarButtonItem
@@ -969,11 +1040,11 @@ class Import2(Import2Base):
             self.items = newitems
             self.refresh()
 
-        
+
     @objc_method
     def refresh(self) -> None:
         self.tv.reloadData()
-        self.doChkFormOk()       
+        self.doChkFormOk()
 
     #### UITableView delegate/dataSource methods...
     @objc_method
@@ -1022,11 +1093,11 @@ class Import2(Import2Base):
             cell = UITableViewCell.alloc().initWithStyle_reuseIdentifier_(UITableViewCellStyleSubtitle, "ACell").autorelease()
             cell.textLabel.text = " "
         return cell
-            
+
     @objc_method
     def tableView_heightForRowAtIndexPath_(self, tv, indexPath) -> float:
         return 65.0
-    
+
     @objc_method
     def tableView_editingStyleForRowAtIndexPath_(self, tv, indexPath) -> int:
         return UITableViewCellEditingStyleDelete if not self.masterKeyMode else UITableViewCellEditingStyleNone
@@ -1056,7 +1127,7 @@ class Import2(Import2Base):
         '''
         if self.masterKeyMode:
             return None
-        
+
         try:
             row = int(indexPath.row) # save param outside objcinstance object and into python for 'handler' closure
             section = int(indexPath.section)
@@ -1089,11 +1160,11 @@ class Import2(Import2Base):
         numvalid = 0
         numpk = 0
         numaddr = 0
-        
+
         ret = True
         asError = False
         msg = ""
-        
+
         if self.masterKeyMode:
             ret = True
             k = _Params(self).get('keystore', None)
@@ -1163,7 +1234,7 @@ class Import2(Import2Base):
     def shouldPerformSegueWithIdentifier_sender_(self, identifier, sender) -> bool:
         # checks here that form is ok, etc
         return self.doChkFormOk()
-    
+
     @objc_method
     def prepareForSegue_sender_(self, segue, sender) -> None:
         if not self.masterKeyMode:
@@ -1173,14 +1244,14 @@ class Import2(Import2Base):
         else:
             _SetParam(self, 'imported_keystore_type', 1 if _Params(self)['keystore'].is_watching_only() else 2)
 
-class ImportSaveWallet(NewWalletVC):
-    
+class ImportSaveWallet(NewWalletVCAtEnd):
+
     @objc_method
     def viewDidLoad(self) -> None:
         send_super(__class__, self, 'viewDidLoad')
         if _Params(self).get('imported_keystore_type', None) == 1:
             self.noPWCheck = True
-        
+
     @objc_method
     def onSave(self) -> None:
         self.view.endEditing_(True)
@@ -1198,13 +1269,13 @@ class ImportSaveWallet(NewWalletVC):
                     wallet_pass = _Params(self)['WalletPass']
                     wants_touchid = _Params(self).get('UseTouchID', False)
                     if not ks:
-                        keys = [x.item for x in _Params(self)['valid_items']] 
+                        keys = [x.item for x in _Params(self)['valid_items']]
                 elif _Params(self)['imported_keystore_type'] == 1:
                     if not ks:
                         addys = [x.item for x in _Params(self)['valid_items']]
                 else:
                     raise Exception("Can't find imported_keystore_type in _Params!")
-                
+
                 _WizardGenerateNewWallet(vc = self, wallet_name = wallet_name, wallet_pass = wallet_pass,
                                          message = _("Generating your wallet..."),
                                          have_keystore = ks,
@@ -1228,16 +1299,20 @@ def _ImportItemify(item : str) -> ImportItem:
         item = item.split(':')[-1]
     elif bitcoin.is_private_key(item):
         typ = 2
-        info = PublicKey.from_WIF_privkey(item).address
+        try:
+            info = PublicKey.from_WIF_privkey(item).address
+        except ValueError:
+            # Not an address, not a PK
+            info, typ = None, 0
     return ImportItem(item, typ, info)
 
 def _ToErrIsHuman(vc : UIViewController, title = "Oops!", message = "Something went wrong! Please email the developers!", onOk = None) -> None:
-    parent = gui.ElectrumGui.gui    
+    parent = gui.ElectrumGui.gui
     parent.show_error(vc = vc, title = title, message = message, onOk = onOk)
 
 def _DoDismiss(vc : UIViewController) -> None:
     vc.presentingViewController.dismissViewControllerAnimated_completion_(True, None)
-    
+
 def _WizardGenerateNewWallet(vc : UIViewController, **kwargs) -> None:
     if kwargs.get('onSuccess', None) or kwargs.get('onFailure', None):
         raise ValueError('_WizardGenerateNewWallet cannot be passed an onFailure or onSuccess callback!')
@@ -1248,19 +1323,19 @@ def _WizardGenerateNewWallet(vc : UIViewController, **kwargs) -> None:
     if not wallet_name:
         raise ValueError('_WizardGenerateNewWallet: wallet_name kwarg missing!')
     parent = gui.ElectrumGui.gui
-    
+
     def ToErrIsHuman() -> None:  _ToErrIsHuman(vc=vc)
-    
+
     def onFailure(msg : str) -> None:
         utils.NSLog("Got error from generate_new_wallet: %s", msg)
         ToErrIsHuman()
-        
+
     def doDismiss() -> None: _DoDismiss(vc)
 
     def openNew() -> None:
         parent.switch_wallets(wallet_name = wallet_name, wallet_pass = wallet_pass, vc = vc, onSuccess=doDismiss,
                               onFailure=onFailure, onCancel=doDismiss if not _IsOnBoarding(vc) else None)
-        
+
     def onSuccess() -> None:
         completion()
         if not _IsOnBoarding(vc):
@@ -1272,7 +1347,7 @@ def _WizardGenerateNewWallet(vc : UIViewController, **kwargs) -> None:
             openNew()
 
     parent.generate_new_wallet(vc = vc, onSuccess = onSuccess, onFailure = onFailure, **kwargs)
-    
+
 
 def _Params(vc : UIViewController) -> dict():
     nav = vc.navigationController
@@ -1292,19 +1367,26 @@ def _SetParam(vc : UIViewController, paramName : str, paramValue : Any) -> None:
     else:
         d[paramName] = paramValue
     _SetParams(vc, d)
-    
+
 def _IsOnBoarding(vc : UIViewController) -> bool:
     nav = vc.navigationController
     if isinstance(nav, NewWalletNav):
         return nav.onBoardingWizard
     return False
-    
 
-_mnem = None   
+
+_mnem = None
 def _Mnem() -> None:
     global _mnem
     if not _mnem: _mnem = Mnemonic()
     return _mnem
+
+def _GetOldSuggestions(prefix) -> set:
+    ret = set()
+    for w in old_words:
+        if w.startswith(prefix):
+            ret.add(w)
+    return ret
 
 def _lowMemory(notificaton : objc_id) -> None:
     # low memory warning -- kill the _Mnem singleton which has 2048 words in it. Not much savings but it's something.
@@ -1339,7 +1421,7 @@ class OnBoardingWizard(OnBoardingWizardBase):
         self.pvc = None
         self.vcs = None
         send_super(__class__, self, 'dealloc')
-        
+
     @objc_method
     def viewDidLoad(self) -> None:
         send_super(__class__, self, 'viewDidLoad')
@@ -1355,7 +1437,7 @@ class OnBoardingWizard(OnBoardingWizardBase):
             if not sb:
                 utils.NSLog("ERROR: SB IS NULL")
                 return
-            vcs = [ sb.instantiateViewControllerWithIdentifier_("On_Boarding_%d" % i) for i in range(1,4) ]                
+            vcs = [ sb.instantiateViewControllerWithIdentifier_("On_Boarding_%d" % i) for i in range(1,4) ]
             vcs.append( sb.instantiateViewControllerWithIdentifier_("On_Boarding_Menu") )
             if not vcs or None in vcs:
                 utils.NSLog("ERROR: Could not find a requisite viewcontroller in %s viewDidLoag method!",str(__class__))
@@ -1371,7 +1453,7 @@ class OnBoardingWizard(OnBoardingWizardBase):
     @objc_method
     def preferredStatusBarStyle(self) -> int:
         return UIStatusBarStyleLightContent
-    
+
     @objc_method
     def presentationCountForPageViewController_(self, pvc) -> int:
         return len(self.vcs) if self.vcs else 0
@@ -1379,7 +1461,7 @@ class OnBoardingWizard(OnBoardingWizardBase):
     @objc_method
     def presentationIndexForPageViewController_(self, pvc) -> int:
         return self.currentPageIndex
-    
+
     @objc_method
     def pageViewController_viewControllerBeforeViewController_(self, pvc, vc) -> ObjCInstance:
         b4 = None
@@ -1389,8 +1471,8 @@ class OnBoardingWizard(OnBoardingWizardBase):
                 b4 = vcs[i-1]
                 break
         return b4
-            
-    
+
+
     @objc_method
     def pageViewController_viewControllerAfterViewController_(self, pvc, vc) -> ObjCInstance:
         aft = None
@@ -1400,7 +1482,7 @@ class OnBoardingWizard(OnBoardingWizardBase):
                 aft = vcs[i+1]
                 break
         return aft
-    
+
     @objc_method
     def onNextButton_(self, curidx : int) -> None:
         nextidx = curidx + 1
@@ -1409,23 +1491,60 @@ class OnBoardingWizard(OnBoardingWizardBase):
             self.currentPageIndex = nextidx
             self.pvc.setViewControllers_direction_animated_completion_(NSArray.arrayWithObject_(vcs[nextidx]),UIPageViewControllerNavigationDirectionForward,True,None)
 
-    
+
 class OnBoardingPage(OnBoardingPageBase):
+    didTranslate = objc_property()
+
+    @objc_method
+    def dealloc(self) -> None:
+        self.didTranslate = None
+        send_super(__class__, self, 'dealloc')
+
     @objc_method
     def viewDidAppear_(self, animated : bool) -> None:
         send_super(__class__, self, 'viewDidAppear:', animated, argtypes=[c_bool])
         if self.parent: self.parent.currentPageIndex = self.pageIndex
-    
+
+    @objc_method
+    def viewWillAppear_(self, animated : bool) -> None:
+        send_super(__class__, self, 'viewWillAppear:', animated, argtypes=[c_bool])
+        # translate UI
+        if not self.didTranslate:
+            self.tit.text = _(self.tit.text)
+            s = self.blurb.attributedText.string
+            utils.uilabel_replace_attributed_text(lbl = self.blurb,
+                                                  text = _(s),
+                                                  template = self.blurb.attributedText)
+            s = _(self.nextBut.currentTitle)
+            for state in UIControlState_ALL_RELEVANT_TUPLE:
+                self.nextBut.setTitle_forState_(s, state)
+            self.didTranslate = True
+
     @objc_method
     def onNext(self) -> None:
         if self.parent: self.parent.onNextButton_(self.pageIndex)
+
 
 class OnBoardingMenu(OnBoardingMenuBase):
     @objc_method
     def viewDidAppear_(self, animated : bool) -> None:
         send_super(__class__, self, 'viewDidAppear:', animated, argtypes=[c_bool])
         if self.parent: self.parent.currentPageIndex = self.pageIndex
-        
+
+    @objc_method
+    def viewWillAppear_(self, animated : bool) -> None:
+        send_super(__class__, self, 'viewWillAppear:', animated, argtypes=[c_bool])
+        # translate UI
+        self.tit.text = _("Get started now")
+        utils.uilabel_replace_attributed_text(lbl = self.blurb,
+                                              text = _("and create your standard wallet or restore an existing one with any of the methods below"),
+                                              template = self.blurb.attributedText)
+        for state in UIControlState_ALL_RELEVANT_TUPLE:
+            self.std.setTitle_forState_(_("Create New Standard Wallet"), state)
+            self.restore.setTitle_forState_(_("Restore from Seed"), state)
+            self.imp.setTitle_forState_(_("Import Addresses or Private Keys"), state)
+            self.master.setTitle_forState_(_("Use a Master Key"), state)
+
     @objc_method
     def jumpToMenu_(self, vcToPushIdentifier) -> None:
         vc = PresentAddWalletWizard(dontPresentJustReturnIt = True)
@@ -1451,15 +1570,15 @@ class OnBoardingMenu(OnBoardingMenuBase):
     @objc_method
     def onNewStandardWallet(self) -> None:
         self.jumpToMenu_("NewStandardWallet")
-        
+
     @objc_method
     def onRestoreSeed(self) -> None:
         self.jumpToMenu_("RESTORE_SEED_1")
-        
+
     @objc_method
     def onImportAddysPks(self) -> None:
         self.jumpToMenu_("IMPORT_KEYS_1")
-        
+
     @objc_method
     def onMasterKey(self) -> None:
         self.jumpToMenu_("MASTER_KEY_1")

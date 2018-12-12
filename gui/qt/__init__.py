@@ -28,7 +28,6 @@ import signal
 import sys
 import traceback
 
-
 try:
     import PyQt5
 except Exception:
@@ -96,7 +95,7 @@ class ElectrumGui:
         if hasattr(QtCore.Qt, "AA_ShareOpenGLContexts"):
             QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_ShareOpenGLContexts)
         if hasattr(QGuiApplication, 'setDesktopFileName'):
-            QGuiApplication.setDesktopFileName('electrum.desktop')
+            QGuiApplication.setDesktopFileName('electron-cash.desktop')
         self.currencies = ['BCH', 'BTC']
         self.config = config
         self.plugins = plugins
@@ -108,12 +107,10 @@ class ElectrumGui:
         self.efilter = OpenFileEventFilter(self.windows)
         self.app = QElectrumApplication(sys.argv)
         self.app.installEventFilter(self.efilter)
-        self.timer = Timer()
+        self.timer = QTimer(self.app); self.timer.setSingleShot(False); self.timer.setInterval(500) #msec
         self.nd = {}
-
-        self.tray = None
-
         # init tray
+        self.tray = None
         self.dark_icon = self.config.get("dark_icon", False)
         self.build_tray()
         self.currency_daemon = {}

@@ -133,7 +133,6 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         self.externalpluginsdialog = None
         self.require_fee_update = False
         self.tx_notifications = []
-        self.tx_notify_timer = None
         self.tl_windows = []
         self.tx_external_keypairs = {}
 
@@ -220,7 +219,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         # update fee slider in case we missed the callback
         self.fee_slider.update()
         self.load_wallet(wallet)
-        self.connect_slots(gui_object.timer)
+        gui_object.timer.timeout.connect(self.timer_actions)
         self.fetch_alias()
 
     def on_history(self, b):
@@ -229,7 +228,9 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
     def setup_exception_hook(self):
         Exception_Hook(self)
 
+    @rate_limited(3.0) # Rate limit to no more than once every 3 seconds
     def on_fx_history(self):
+        if self.cleaned_up: return
         self.history_list.refresh_headers()
         self.history_list.update()
         self.address_list.update()
@@ -238,7 +239,9 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
     def on_quotes(self, b):
         self.new_fx_quotes_signal.emit()
 
+    @rate_limited(3.0) # Rate limit to no more than once every 3 seconds
     def on_fx_quotes(self):
+        if self.cleaned_up: return
         self.update_status()
         # Refresh edits with the new rate
         edit = self.fiat_send_e if self.fiat_send_e.is_last_edited else self.amount_e
@@ -251,7 +254,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
             self.history_updated_signal.emit() # inform things like address_dialog that there's a new history
 
     def toggle_tab(self, tab):
-        show = not self.config.get('show_{}_tab'.format(tab.tab_name), False)
+        show = self.tabs.indexOf(tab) == -1
         self.config.set_key('show_{}_tab'.format(tab.tab_name), show)
         item_text = (_("Hide") if show else _("Show")) + " " + tab.tab_description
         tab.menu_action.setText(item_text)
@@ -544,7 +547,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         wallet_menu.addAction(_("Find"), self.toggle_search).setShortcut(QKeySequence("Ctrl+F"))
 
         def add_toggle_action(view_menu, tab):
-            is_shown = self.config.get('show_{}_tab'.format(tab.tab_name), False)
+            is_shown = self.tabs.indexOf(tab) > -1
             item_name = (_("Hide") if is_shown else _("Show")) + " " + tab.tab_description
             tab.menu_action = view_menu.addAction(item_name, lambda: self.toggle_tab(tab))
 
@@ -612,12 +615,10 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         ])
         self.show_message(msg, title="Electron Cash - " + _("Reporting Bugs"))
 
-    last_notify_tx_time = 0.0
-    notify_tx_rate = 30.0
-
-    def notify_tx_cb(self):
-        n_ok = 0
-        if self.network and self.network.is_connected() and self.wallet:
+    @rate_limited(15.0)
+    def notify_transactions(self):
+        if self.network and self.network.is_connected() and self.wallet and not self.cleaned_up:
+            n_ok = 0
             num_txns = len(self.tx_notifications)
             if num_txns:
                 # Combine the transactions
@@ -635,31 +636,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
                                     .format(n_ok, self.format_amount_and_units(total_amount)))
                     else:
                         self.notify(_("New transaction received: {}").format(self.format_amount_and_units(total_amount)))
-        self.tx_notifications = list()
-        self.last_notify_tx_time = time.time() if n_ok else self.last_notify_tx_time
-        if self.tx_notify_timer:
-            self.tx_notify_timer.stop()
-            self.tx_notify_timer = None
-
-
-    def notify_transactions(self):
-        if self.tx_notify_timer or not len(self.tx_notifications) or self.cleaned_up:
-            # common case: extant notify timer -- we already enqueued to notify. So bail and wait for timer to handle it.
-            return
-        elapsed = time.time() - self.last_notify_tx_time
-        if elapsed < self.notify_tx_rate:
-            # spam control. force tx notify popup to not appear more often than every 30 seconds by enqueing the request for a timer to
-            # handle it sometime later
-            self.tx_notify_timer = QTimer(self)
-            self.tx_notify_timer.setSingleShot(True)
-            self.tx_notify_timer.timeout.connect(self.notify_tx_cb)
-            when = (self.notify_tx_rate - elapsed)
-            self.print_error("Notify spam control: will notify GUI of %d new tx's in %f seconds"%(len(self.tx_notifications),when))
-            self.tx_notify_timer.start(when * 1e3) # time in ms
-        else:
-            # it's been a while since we got a tx notify -- so do it immediately (no timer necessary)
-            self.notify_tx_cb()
-
+            self.tx_notifications = list()
 
     def notify(self, message):
         if self.tray:
@@ -686,9 +663,6 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         if fileName and directory != os.path.dirname(fileName):
             self.config.set_key('io_dir', os.path.dirname(fileName), True)
         return fileName
-
-    def connect_slots(self, sender):
-        sender.timer_signal.connect(self.timer_actions)
 
     def timer_actions(self):
         # Note this runs in the GUI thread
@@ -783,6 +757,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         elif self.network.is_connected():
             server_height = self.network.get_server_height()
             server_lag = self.network.get_local_height() - server_height
+            num_chains = len(self.network.get_blockchains())
             # Server height can be 0 after switching to a new server
             # until we get a headers subscription request response.
             # Display the synchronizing message in that case.
@@ -791,7 +766,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
                 icon = QIcon(":icons/status_waiting.png")
             elif server_lag > 1:
                 text = _("Server is lagging ({} blocks)").format(server_lag)
-                icon = QIcon(":icons/status_lagging.png")
+                icon = QIcon(":icons/status_lagging.png") if num_chains <= 1 else QIcon(":icons/status_lagging_fork.png")
             else:
                 c, u, x = self.wallet.get_balance()
                 text =  _("Balance" ) + ": %s "%(self.format_amount_and_units(c))
@@ -805,9 +780,9 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
                     text += self.fx.get_fiat_status_text(c + u + x,
                                                          self.base_unit(), self.get_decimal_point()) or ''
                 if not self.network.proxy:
-                    icon = QIcon(":icons/status_connected.png")
+                    icon = QIcon(":icons/status_connected.png") if num_chains <= 1 else QIcon(":icons/status_connected_fork.png")
                 else:
-                    icon = QIcon(":icons/status_connected_proxy.png")
+                    icon = QIcon(":icons/status_connected_proxy.png") if num_chains <= 1 else QIcon(":icons/status_connected_proxy_fork.png")
         else:
             text = _("Not connected")
             icon = QIcon(":icons/status_disconnected.png")
@@ -1462,7 +1437,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
 
         try:
             # handle op_return if specified and enabled
-            opreturn_message = self.message_opreturn_e.text() if self.config.get('enable_opreturn') else None
+            opreturn_message = self.message_opreturn_e.text()
             if opreturn_message:
                 outputs.append(self.output_for_opreturn_stringdata(opreturn_message))
         except OPReturnTooLarge as e:
@@ -1562,7 +1537,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         def sign_done(success):
             if success:
                 if not tx.is_complete():
-                    self.show_transaction(tx)
+                    self.show_transaction(tx, tx_desc)
                     self.do_clear()
                 else:
                     self.broadcast_transaction(tx, tx_desc)
@@ -1714,6 +1689,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         amount = out.get('amount')
         label = out.get('label')
         message = out.get('message')
+        op_return = out.get('op_return')
         # use label as description (not BIP21 compliant)
         if label and not message:
             message = label
@@ -1724,7 +1700,14 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         if amount:
             self.amount_e.setAmount(amount)
             self.amount_e.textEdited.emit("")
-
+        if op_return:
+            self.message_opreturn_e.setText(op_return)
+            self.message_opreturn_e.setHidden(False)
+            self.opreturn_label.setHidden(False)
+        elif not self.config.get('enable_opreturn'):
+            self.message_opreturn_e.setText('')
+            self.message_opreturn_e.setHidden(True)
+            self.opreturn_label.setHidden(True)
 
     def do_clear(self):
         self.is_max = False
@@ -1738,12 +1721,19 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         self.max_button.setDisabled(False)
         self.set_pay_from([])
         self.tx_external_keypairs = {}
+        self.message_opreturn_e.setVisible(self.config.get('enable_opreturn', False))
+        self.opreturn_label.setVisible(self.config.get('enable_opreturn', False))
         self.update_status()
         run_hook('do_clear', self)
 
     def set_frozen_state(self, addrs, freeze):
         self.wallet.set_frozen_state(addrs, freeze)
         self.address_list.update()
+        self.utxo_list.update()
+        self.update_fee()
+
+    def set_frozen_coin_state(self, utxos, freeze):
+        self.wallet.set_frozen_coin_state(utxos, freeze)
         self.utxo_list.update()
         self.update_fee()
 
@@ -1983,9 +1973,10 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         c = commands.Commands(self.config, self.wallet, self.network, lambda: self.console.set_json(True))
         methods = {}
         def mkfunc(f, method):
-            return lambda *args: f(method, args, self.password_dialog)
+            return lambda *args, **kwargs: f(method, *args, password_getter=self.password_dialog,
+                                             **kwargs)
         for m in dir(c):
-            if m[0]=='_' or m in ['network','wallet']: continue
+            if m[0]=='_' or m in ['network','wallet','config']: continue
             methods[m] = mkfunc(c._run, m)
 
         console.updateNamespace(methods)
@@ -2419,10 +2410,6 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         file_content = file_content.strip()
         tx_file_dict = json.loads(str(file_content))
         tx = self.tx_from_text(file_content)
-        # Older saved transaction do not include this key.
-        if 'input_values' in tx_file_dict and len(tx_file_dict['input_values']) >= len(tx.inputs()):
-            for i in range(len(tx.inputs())):
-                tx._inputs[i]['value'] = tx_file_dict['input_values'][i]
         return tx
 
     def do_process_from_text(self):
@@ -3197,10 +3184,6 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         if self.network:
             self.network.unregister_callback(self.on_network)
 
-        if self.tx_notify_timer:
-            self.tx_notify_timer.stop()
-            self.tx_notify_timer = None
-
         # We catch these errors with the understanding that there is no recovery at
         # this point, given user has likely performed an action we cannot recover
         # cleanly from.  So we attempt to exit as cleanly as possible.
@@ -3222,6 +3205,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
             self.qr_window.close()
         self.close_wallet()
 
+        self.gui_object.timer.timeout.disconnect(self.timer_actions)
         self.gui_object.close_window(self, self.daemon)
 
     def internal_plugins_dialog(self):

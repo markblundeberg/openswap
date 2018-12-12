@@ -153,7 +153,14 @@ class TxDialog(QDialog, MessageBoxMixin):
             event.ignore()
         else:
             event.accept()
-            dialogs.remove(self)
+            try:
+                dialogs.remove(self)
+            except ValueError:  # wasn't in list
+                pass
+
+    def reject(self):
+        # Override escape-key to close normally (and invoke closeEvent)
+        self.close()
 
     def show_qr(self):
         text = bfh(str(self.tx))
@@ -180,8 +187,6 @@ class TxDialog(QDialog, MessageBoxMixin):
         fileName = self.main_window.getSaveFileName(_("Select where to save your signed transaction"), name, "*.txn")
         if fileName:
             tx_dict = self.tx.as_dict()
-            input_values = [x.get('value') for x in self.tx.inputs()]
-            tx_dict['input_values'] = input_values
             with open(fileName, "w+") as f:
                 f.write(json.dumps(tx_dict, indent=4) + '\n')
             self.show_message(_("Transaction saved successfully"))

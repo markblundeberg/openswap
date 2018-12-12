@@ -30,6 +30,11 @@ from .bitcoin import *
 class VerifyError(Exception):
     '''Exception used for blockchain verification errors.'''
 
+CHUNK_FORKS = -3
+CHUNK_BAD = -2
+CHUNK_LACKED_PROOF = -1
+CHUNK_ACCEPTED = 0
+
 def bits_to_work(bits):
     return (1 << 256) // (bits_to_target(bits) + 1)
 
@@ -79,14 +84,13 @@ def serialize_header(res):
     return s
 
 def deserialize_header(s, height):
-    hex_to_int = lambda s: int('0x' + bh2u(s[::-1]), 16)
     h = {}
-    h['version'] = hex_to_int(s[0:4])
+    h['version'] = int.from_bytes(s[0:4], 'little')
     h['prev_block_hash'] = hash_encode(s[4:36])
     h['merkle_root'] = hash_encode(s[36:68])
-    h['timestamp'] = hex_to_int(s[68:72])
-    h['bits'] = hex_to_int(s[72:76])
-    h['nonce'] = hex_to_int(s[76:80])
+    h['timestamp'] = int.from_bytes(s[68:72], 'little')
+    h['bits'] = int.from_bytes(s[72:76], 'little')
+    h['nonce'] = int.from_bytes(s[76:80], 'little')
     h['block_height'] = height
     return h
 
@@ -135,8 +139,7 @@ def verify_proven_chunk(chunk_base_height, chunk_data):
     prev_header = None
     prev_header_hash = None
     for i in range(header_count):
-        raw_header = chunk.get_header_at_index(i)
-        header = deserialize_header(raw_header, chunk_base_height + i)
+        header = chunk.get_header_at_index(i)
         # Check the chain of hashes for all headers preceding the proven one.
         this_header_hash = hash_header(header)
         if i > 0:
@@ -160,21 +163,26 @@ def root_from_proof(hash, branch, index):
 class HeaderChunk:
     def __init__(self, base_height, data):
         self.base_height = base_height
-        self.data = data
+        self.header_count = len(data) // HEADER_SIZE
+        self.headers = [deserialize_header(data[i * HEADER_SIZE : (i + 1) * HEADER_SIZE],
+                                           base_height + i)
+                        for i in range(self.header_count)]
 
     def __repr__(self):
-        return "HeaderChunk(base_height={}, data_count={})".format(self.base_height, len(self.data))
+        return "HeaderChunk(base_height={}, header_count={})".format(self.base_height, self.header_count)
+
+    def get_count(self):
+        return self.header_count
 
     def contains_height(self, height):
-        header_count = len(self.data) // HEADER_SIZE
-        return height >= self.base_height and height < self.base_height + header_count
+        return height >= self.base_height and height < self.base_height + self.header_count
 
     def get_header_at_height(self, height):
+        assert self.contains_height(height)
         return self.get_header_at_index(height - self.base_height)
 
     def get_header_at_index(self, index):
-        header_offset = index * HEADER_SIZE
-        return self.data[header_offset:header_offset + HEADER_SIZE]
+        return self.headers[index]
 
 class Blockchain(util.PrintError):
     """
@@ -190,6 +198,12 @@ class Blockchain(util.PrintError):
         self.lock = threading.Lock()
         with self.lock:
             self.update_size()
+
+    def __repr__(self):
+        return "<{}.{} {}>".format(__name__, type(self).__name__, self.format_base())
+
+    def format_base(self):
+        return "{}@{}".format(self.get_name(), self.get_base_height())
 
     def parent(self):
         return blockchains[self.parent_base_height]
@@ -258,8 +272,7 @@ class Blockchain(util.PrintError):
 
         header_count = len(chunk_data) // HEADER_SIZE
         for i in range(header_count):
-            raw_header = chunk.get_header_at_index(i)
-            header = deserialize_header(raw_header, chunk_base_height + i)
+            header = chunk.get_header_at_index(i)
             # Check the chain of hashes and the difficulty.
             bits = self.get_bits(header, chunk)
             self.verify_header(header, prev_header, bits)
@@ -340,8 +353,7 @@ class Blockchain(util.PrintError):
     def read_header(self, height, chunk=None):
         # If the read is done within an outer call with local unstored header data, we first look in the chunk data currently being processed.
         if chunk is not None and chunk.contains_height(height):
-            header = chunk.get_header_at_height(height)
-            return deserialize_header(header, height)
+            return chunk.get_header_at_height(height)
 
         assert self.parent_base_height != self.base_height
         if height < 0:
@@ -515,30 +527,51 @@ class Blockchain(util.PrintError):
             return False
         return True
 
-    def chunk_exists(self, base_height, hexdata):
-        """
-        We truncate on writing any chunks after the verification block height, which
-        means that if a slow server gives us an old chunk, we then lose data that
-        other consecutive chunks will try and build on and error.
-        """
-        if base_height > NetworkConstants.VERIFICATION_BLOCK_HEIGHT:
-            header_count = len(hexdata) // HEADER_SIZE
-            top_height = base_height + header_count - 1
-            if top_height <= self.height():
-                self.print_error("chunk already appended {} -> {} (current height {})".format(base_height, top_height, self.height()))
-                return True
-        return False
-
     def connect_chunk(self, base_height, hexdata, proof_was_provided=False):
-        if self.chunk_exists(base_height, hexdata):
-            return False
+        chunk = HeaderChunk(base_height, hexdata)
+
+        header_count = len(hexdata) // HEADER_SIZE
+        top_height = base_height + header_count - 1
+        # We know that chunks before the checkpoint height, end at the checkpoint height, and
+        # will be guaranteed to be covered by the checkpointing. If no proof is provided then
+        # this is wrong.
+        if top_height <= NetworkConstants.VERIFICATION_BLOCK_HEIGHT:
+            if not proof_was_provided:
+                return CHUNK_LACKED_PROOF
+            # We do not truncate when writing chunks before the checkpoint, and there's no
+            # way at this time to know if we have this chunk, or even a consecutive subset.
+            # So just overwrite it.
+        elif base_height < NetworkConstants.VERIFICATION_BLOCK_HEIGHT and proof_was_provided:
+            # This was the initial verification request which gets us enough leading headers
+            # that we can calculate difficulty and verify the headers that we add to this
+            # chain above the verification block height.
+            if top_height <= self.height():
+                return CHUNK_ACCEPTED
+        elif base_height != self.height() + 1:
+            # This chunk covers a segment of this blockchain which we already have headers
+            # for. We need to verify that there isn't a split within the chunk, and if
+            # there is, indicate the need for the server to fork.
+            intersection_height = min(top_height, self.height())
+            chunk_header = chunk.get_header_at_height(intersection_height)
+            our_header = self.read_header(intersection_height)
+            if hash_header(chunk_header) != hash_header(our_header):
+                return CHUNK_FORKS
+            if intersection_height <= self.height():
+                return CHUNK_ACCEPTED
+        else:
+            # This base of this chunk joins to the top of the blockchain in theory.
+            # We need to rule out the case where the chunk is actually a fork at the
+            # connecting height.
+            our_header = self.read_header(self.height())
+            chunk_header = chunk.get_header_at_height(base_height)
+            if hash_header(our_header) != chunk_header['prev_block_hash']:
+                return CHUNK_FORKS
 
         try:
-            data = bfh(hexdata)
             if not proof_was_provided:
-                self.verify_chunk(base_height, data)
-            self.save_chunk(base_height, data)
-            return True
+                self.verify_chunk(base_height, hexdata)
+            self.save_chunk(base_height, hexdata)
+            return CHUNK_ACCEPTED
         except VerifyError as e:
             self.print_error('verify_chunk failed: {}'.format(e))
-            return False
+            return CHUNK_BAD

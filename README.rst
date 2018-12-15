@@ -15,6 +15,8 @@ This is a fork Electron Cash augmented with:
 * on-chain private messaging (BCHMessage), and
 * BTC wallet support.
 
+To get started: Open up the Addresses tab, and right click on one of your BCH addresses; click on OpenSwap. This allows you to view the private messages you have sent and received to other addresses. From here you can make offers, send messages, and also initiate atomic swaps (by right clicking on ACCEPT messages).
+
 Due to various incompatibilities (from supporting multiple wallets), configuration files will be saved in a separate directory from your normal Electron Cash installation. `~/.openswap` (unix) or `OpenSwap` (win).
 
 *Standard instructions for Electron Cash (the base software) follow:*

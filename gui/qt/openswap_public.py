@@ -24,7 +24,7 @@ from .qrtextedit import ShowQRTextEdit
 
 from electroncash import bchmessage
 from electroncash import openswap
-from electroncash.util import print_error
+from electroncash.util import print_error, print_stderr
 
 from .openswap_offerinfo import OfferInfoDialog
 
@@ -318,7 +318,7 @@ class MyHistoryList(MyTreeWidget):
             item.setToolTip(0, str(conf) + " confirmation" + ("s" if conf != 1 else ""))
 
             item.setData(0, Qt.UserRole, tx_hash)
-            item.setData(1, Qt.UserRole, from_pubkey)
+            item.setData(2, Qt.UserRole, from_pubkey)
             item.setToolTip(3, '<p>%s</p>'%(escape(datastr),))
             self.insertTopLevelItem(0, item)
             if current_tx == tx_hash:
@@ -385,13 +385,6 @@ class MyHistoryList(MyTreeWidget):
         tx_hash = item.data(0, Qt.UserRole)
         if not tx_hash:
             return
-        column = self.currentColumn()
-        if column is 0:
-            column_title = "ID"
-            column_data = tx_hash
-        else:
-            column_title = self.headerItem().text(column)
-            column_data = item.text(column)
 
         pmw = self.parent.pmw
         if pmw:
@@ -399,10 +392,20 @@ class MyHistoryList(MyTreeWidget):
         else:
             mypubkey = None
 
-        from_pubkey = item.data(1, Qt.UserRole)
+        from_pubkey = item.data(2, Qt.UserRole)
         from_me = (from_pubkey == mypubkey)
-
         oinfo = item.data(3, Qt.UserRole)
+
+        column = self.currentColumn()
+        if column == 0:
+            column_title = "ID"
+            column_data = tx_hash
+        elif column == 2:
+            column_title = _("sender pubkey")
+            column_data = from_pubkey.hex()
+        else:
+            column_title = self.headerItem().text(column)
+            column_data = item.text(column)
 
         menu = QMenu()
 

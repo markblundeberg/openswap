@@ -24,7 +24,7 @@ from .qrtextedit import ShowQRTextEdit
 
 from electroncash import bchmessage
 from electroncash import openswap
-from electroncash.util import print_error
+from electroncash.util import print_error, print_stderr
 
 from .transaction_dialog import show_transaction
 
@@ -192,7 +192,7 @@ class OpenSwapDialog(QDialog, MessageBoxMixin):
             err = response.get('error')
             if err:
                 try:
-                    print_stderr("Transaction broadcast error", err['code'], err['message'])
+                    print_stderr("Transaction broadcast error:", err['code'], repr(err['message']))
                 except:
                     print_stderr("Transaction broadcast error:", err)
             else:
@@ -450,14 +450,6 @@ class MyHistoryList(MyTreeWidget):
         tx_hash, i = item.data(0, Qt.UserRole)
         if not tx_hash:
             return
-        column = self.currentColumn()
-        if column is 0:
-            column_title = "ID"
-            column_data = tx_hash
-        else:
-            column_title = self.headerItem().text(column)
-            column_data = item.text(column)
-
         key = self.parent.key
         mypubkey  = key.pubkey
 
@@ -471,6 +463,23 @@ class MyHistoryList(MyTreeWidget):
         else:
             other_pubkey = from_pubkey
         packet = item.data(5, Qt.UserRole)
+
+        column = self.currentColumn()
+        if column == 0:
+            column_title = "ID"
+            column_data = tx_hash
+        elif column == 2:
+            column_title = _("sender pubkey")
+            column_data = from_pubkey.hex()
+        elif column == 3:
+            column_title = _("recipient pubkey")
+            if to_pubkey:
+                column_data = to_pubkey.hex()
+            else:
+                column_data = ""
+        else:
+            column_title = self.headerItem().text(column)
+            column_data = item.text(column)
 
         menu = QMenu()
 
@@ -496,7 +505,7 @@ class MyHistoryList(MyTreeWidget):
         if to_me:
             menu.addAction(_("Reply raw message"), lambda: self.parent.write_message(from_pubkey.hex()))
         elif to_pubkey:
-            menu.addAction(_("Reply raw message"), lambda: self.parent.write_message(to_pubkey.hex()))
+            menu.addAction(_("Write another raw message"), lambda: self.parent.write_message(to_pubkey.hex()))
 
         menu.addAction(_("Copy {}").format(column_title), lambda: self.parent.main_window.app.clipboard().setText(column_data))
 

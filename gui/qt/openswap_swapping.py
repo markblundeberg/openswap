@@ -405,18 +405,16 @@ class SwapDialog(QDialog, MessageBoxMixin):
 
         tx = sc.mktx(coins, addr, privkey, secret, estimate_fee, sequence=sequence)
 
-        print(tx.serialize())
-
         def callback(response):
             err = response.get('error')
             if err:
                 try:
-                    print_stderr("Transaction broadcast error", err['code'], err['message'])
+                    print_stderr("Transaction broadcast error:", err['code'], repr(err['message']))
                 except:
                     print_stderr("Transaction broadcast error:", err)
             else:
                 print_error("Transaction broadcast result:", response)  # --verbose only
-        sc.network.broadcast_transaction(tx)
+        sc.network.broadcast_transaction(tx.serialize(), callback=callback)
 
 class SwapUTXOList(MyTreeWidget):
 #    filter_columns = [0, 2]  # Address, Label

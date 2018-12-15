@@ -1,3 +1,24 @@
+OpenSwap
+========
+
+::
+
+  Licence: MIT Licence
+  Author: Mark B. Lundeberg
+  Language: Python
+
+**Telegram group here: https://t.me/open_swap**
+
+This is a fork Electron Cash augmented with:
+
+* an atomic swap platform,
+* on-chain private messaging (BCHMessage), and
+* BTC wallet support.
+
+Due to various incompatibilities (from supporting multiple wallets), configuration files will be saved in a separate directory from your normal Electron Cash installation. `~/.openswap` (unix) or `OpenSwap` (win).
+
+*Standard instructions for Electron Cash (the base software) follow:*
+
 Electron Cash - Lightweight Bitcoin Cash client
 =====================================
 

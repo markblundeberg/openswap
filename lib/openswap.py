@@ -398,6 +398,7 @@ class HalfSwapController:
         keypairs = {pubkey.hex() : (privkey.to_bytes(32,'big'), True)}
         tx.sign(keypairs)
         self.contract.completetx(tx, secret)
+        tx.serialize() # make sure tx.raw is up-to-date
         return tx
 
 class AtomicSwap:

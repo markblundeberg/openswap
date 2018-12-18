@@ -61,7 +61,7 @@ if platform.system() in ['Linux', 'FreeBSD', 'DragonFly']:
     ]
 
 setup(
-    name="Electron Cash",
+    name="OpenSwap",
     version=version.PACKAGE_VERSION,
     install_requires=[
         'pyaes>=0.1a1',

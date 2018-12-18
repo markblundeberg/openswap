@@ -102,6 +102,10 @@ setup(
         'electroncash': [
             'servers.json',
             'servers_testnet.json',
+            'servers_BTC.json',
+            'servers_BTC_testnet.json',
+            'checkpoints.json',
+            'checkpoints_testnet.json',
             'currencies.json',
             'www/index.html',
             'wordlist/*.txt',

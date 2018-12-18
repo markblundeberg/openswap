@@ -377,6 +377,7 @@ if __name__ == '__main__':
             d = daemon.Daemon(config, fd, currency, True)
             d.start()
             d.init_gui(plugins)
+            sys.exit(0)
         else:
             result = server.gui(config_options)
 

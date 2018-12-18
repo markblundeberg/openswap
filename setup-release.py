@@ -18,8 +18,8 @@ from lib.util import print_error
 from lib.version import PACKAGE_VERSION as version
 
 
-name = "Electron-Cash"
-mainscript = 'electron-cash'
+name = "OpenSwap"
+mainscript = 'openswap'
 
 if sys.version_info[:3] < (3, 5, 2):
     print_error("Error: " + name + " requires Python version >= 3.5.2...")

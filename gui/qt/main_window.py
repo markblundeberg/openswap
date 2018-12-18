@@ -601,19 +601,19 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
             self.show_error(_('No donation address for this server'))
 
     def show_about(self):
-        QMessageBox.about(self, "Electron Cash",
+        QMessageBox.about(self, "OpenSwap",
                           _("Version")+" %s" % (self.wallet.electrum_version) + "\n\n" +
-                          _("Electron Cash's focus is speed, with low resource usage and simplifying Bitcoin Cash. You do not need to perform regular backups, because your wallet can be recovered from a secret phrase that you can memorize or write on paper. Startup times are instant because it operates in conjunction with high-performance servers that handle the most complicated parts of the Bitcoin Cash system."  + "\n\n" +
+                          _("OpenSwap is a fork of Electron Cash, a wallet for Bitcoin Cash. OpenSwap strives to maintain the SPV principle. You do not need to perform regular backups, because your wallet can be recovered from a secret phrase that you can memorize or write on paper. Startup times are instant because it operates in conjunction with high-performance servers that handle the most complicated parts of the Bitcoin Cash system."  + "\n\n" +
                             _("Uses icons from the Icons8 icon pack (icons8.com).")))
 
     def show_report_bug(self):
         msg = ' '.join([
             _("Please report any bugs as issues on github:<br/>"),
-            "<a href=\"https://github.com/Electron-Cash/Electron-Cash/issues\">https://github.com/Electron-Cash/Electron-Cash/issues</a><br/><br/>",
-            _("Before reporting a bug, upgrade to the most recent version of Electron Cash (latest release or git HEAD), and include the version number in your report."),
+            "<a href=\"https://github.com/markblundeberg/openswap/issues\">https://github.com/markblundeberg/openswap/issues</a><br/><br/>",
+            _("Before reporting a bug, upgrade to the most recent version of OpenSwap (latest release or git HEAD), and include the version number in your report."),
             _("Try to explain not only what the bug is, but how it occurs.")
         ])
-        self.show_message(msg, title="Electron Cash - " + _("Reporting Bugs"))
+        self.show_message(msg, title="OpenSwap - " + _("Reporting Bugs"))
 
     @rate_limited(15.0)
     def notify_transactions(self):
@@ -642,9 +642,9 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         if self.tray:
             try:
                 # this requires Qt 5.9
-                self.tray.showMessage("Electron Cash", message, QIcon(":icons/electrum_dark_icon"), 20000)
+                self.tray.showMessage("OpenSwap", message, QIcon(":icons/electrum_dark_icon"), 20000)
             except TypeError:
-                self.tray.showMessage("Electron Cash", message, QSystemTrayIcon.Information, 20000)
+                self.tray.showMessage("OpenSwap", message, QSystemTrayIcon.Information, 20000)
 
 
 

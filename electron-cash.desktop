@@ -3,10 +3,10 @@
 
 [Desktop Entry]
 Comment=Lightweight Bitcoin Cash Client
-Exec=electron-cash %u
+Exec=openswap %u
 GenericName=Bitcoin Cash Wallet
 Icon=electron-cash
-Name=Electron Cash
+Name=OpenSwap
 Categories=Finance;Network;
 StartupNotify=false
 Terminal=false
@@ -15,5 +15,5 @@ MimeType=x-scheme-handler/bitcoincash;
 Actions=Testnet;
 
 [Desktop Action Testnet]
-Exec=electron-cash --testnet %u
+Exec=openswap --testnet %u
 Name=Testnet mode

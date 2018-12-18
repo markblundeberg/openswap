@@ -27,7 +27,7 @@ if [ -d electrum ]; then
     git pull
     cd ..
 else
-    URL=https://github.com/Electron-Cash/Electron-Cash
+    URL=https://github.com/markblundeberg/openswap
     git clone -b master $URL electrum # rest of script assumes the dir is called 'electrum'
 fi
 

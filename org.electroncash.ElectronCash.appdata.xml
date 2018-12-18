@@ -20,7 +20,7 @@
 	</screenshots>
 	<translation type="gettext">electron-cash</translation>
 	<provides>
-		<binary>electron-cash</binary>
+		<binary>openswap</binary>
 		<python3>electroncash</python3>
 		<python3>electroncash_gui</python3>
 		<python3>electroncash_plugins</python3>

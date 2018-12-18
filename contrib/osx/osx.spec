@@ -7,7 +7,7 @@ import os
 
 PACKAGE='Electron-Cash'
 PYPKG='electroncash'
-MAIN_SCRIPT='electron-cash'
+MAIN_SCRIPT='openswap'
 ICONS_FILE='electron.icns'
 
 for i, x in enumerate(sys.argv):

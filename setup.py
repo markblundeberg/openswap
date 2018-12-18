@@ -108,7 +108,7 @@ setup(
             'locale/*/LC_MESSAGES/electron-cash.mo',
         ]
     },
-    scripts=['electron-cash'],
+    scripts=['openswap'],
     data_files=data_files,
     description="Lightweight Bitcoin Cash Wallet",
     author="Jonald Fyookball",

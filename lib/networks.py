@@ -65,8 +65,13 @@ class NetworkConstants:
         cls.BITCOIN_CASH_FORK_BLOCK_HEIGHT = 478559
         cls.BITCOIN_CASH_FORK_BLOCK_HASH = "000000000000000000651ef99cb9fcbe0dadde1d424bd9f15ff20136191a5eec"
 
-        cls.VERIFICATION_BLOCK_MERKLE_ROOT = "3848ff6c001ebf78ec1a798c2002f154ace4ba6c0f0a58ccb22f66934eda7143"
-        cls.VERIFICATION_BLOCK_HEIGHT = 540250
+        # Note to Jonald or anyone reading this: the below is misleadingly named.  It's not a simple
+        # MERKLE_ROOT but a MERKLE_PROOF which is basically the hashes of all MERKLE_ROOTS up until and including
+        # this block. Consult the ElectrumX documentation.
+        # To get this value you need to connect to an ElectrumX server you trust and issue it a protocol command.
+        # blockchain.block.header (see ElectrumX docs)
+        cls.VERIFICATION_BLOCK_MERKLE_ROOT = "b8f9b1649d0bba75e2c2ea4be73395a0967397003f33a40653caca0ec6a73baa"
+        cls.VERIFICATION_BLOCK_HEIGHT = 560644
         
     @classmethod
     def set_testnet(cls):
@@ -87,8 +92,8 @@ class NetworkConstants:
         cls.BITCOIN_CASH_FORK_BLOCK_HEIGHT = 1155876
         cls.BITCOIN_CASH_FORK_BLOCK_HASH = "00000000000e38fef93ed9582a7df43815d5c2ba9fd37ef70c9a0ea4a285b8f5"
         
-        cls.VERIFICATION_BLOCK_MERKLE_ROOT = "029d920720e864945b8a5f97cd83e78e13fa001349cd1998815bdf2a6996dfa7"
-        cls.VERIFICATION_BLOCK_HEIGHT = 1248199
+        cls.VERIFICATION_BLOCK_MERKLE_ROOT = "c3cc7a7b6fe5e0ff19b750ae200ae93664b3abf09bf510e26e15ba338afe1f1a"
+        cls.VERIFICATION_BLOCK_HEIGHT = 1273800
 
 
 NetworkConstants.set_mainnet()

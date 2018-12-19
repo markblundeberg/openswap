@@ -9,6 +9,8 @@ OpenSwap
 
 **Telegram group here: https://t.me/open_swap**
 
+**Demo video here: https://www.youtube.com/watch?v=Va2m6ePNVqM**
+
 This is a fork Electron Cash augmented with:
 
 * an atomic swap platform,

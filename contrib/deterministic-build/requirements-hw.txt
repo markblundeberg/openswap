@@ -14,4 +14,4 @@ pyblake2==1.1.2
 requests==2.18.4
 six==1.11.0
 trezor==0.10.1
-urllib3==1.22
+urllib3==1.26.5
